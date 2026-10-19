@@ -20,7 +20,7 @@ export function sundayPeople(data, sunday) {
   const byId = new Map(data.profiles.map((p) => [p.id, p]));
   const riders = data.requests
     .filter((r) => r.sunday === sunday && r.status !== "cancelled")
-    .map((r) => ({ ...byId.get(r.riderId), rideHome: r.rideHome, requestNote: r.note }))
+    .map((r) => ({ ...byId.get(r.riderId), rideHome: r.rideHome, requestNote: r.note, extraPeople: r.extraPeople || 0, canSplit: !!r.canSplit }))
     .filter((r) => r.id);
   const drivers = data.profiles.filter((p) => p.role === "driver").map((p) => asDriver(p, data.weeks, sunday));
   return { riders, drivers };
@@ -52,16 +52,36 @@ export async function recompute({ data, sunday, church, config, assignments, wai
   return { ...ev, waitlist, travelSource: t.source, travelNote: t.note };
 }
 
-/** Move one rider to a car ("driverId|trip") or to the waitlist ("wait"). Returns new assignments + waitlist. */
-export function applyMove({ assignments, waitlist }, riderId, target, reason = "Moved to the waitlist by the leader.") {
-  const a = assignments.filter((x) => x.riderId !== riderId).map(({ riderId, driverId, trip }) => ({ riderId, driverId, trip }));
-  let w = waitlist.filter((x) => x.riderId !== riderId);
-  if (target === "wait") w = [...w, { riderId, reason }];
-  else {
-    const [driverId, trip] = target.split("|");
-    a.push({ riderId, driverId, trip: Number(trip) || 1 });
+/**
+ * Move a rider (or the part of a group in one car) to another car ("driverId|trip") or the waitlist ("wait").
+ * `from` is where they are now: "wait" or "driverId|trip". Seats move with them.
+ */
+export function applyMove({ assignments, waitlist }, riderId, target, from, reason = "Moved to the waitlist by the leader.") {
+  let a = assignments.map((x) => ({ ...x }));
+  let w = waitlist.map((x) => ({ ...x }));
+  let seats = 1;
+  if (from === "wait") {
+    const e = w.find((x) => x.riderId === riderId);
+    seats = e?.seats ?? 1;
+    w = w.filter((x) => x.riderId !== riderId);
+  } else {
+    const idx = a.findIndex((x) => x.riderId === riderId && `${x.driverId}|${x.trip}` === from);
+    if (idx >= 0) { seats = a[idx].seats ?? 1; a.splice(idx, 1); }
   }
-  return { assignments: a, waitlist: w };
+  if (target === "wait") {
+    const e = w.find((x) => x.riderId === riderId);
+    if (e) e.seats = (e.seats ?? 1) + seats;
+    else w.push({ riderId, seats, reason });
+  } else {
+    const [driverId, trip] = target.split("|");
+    const t = Number(trip) || 1;
+    const same = a.find((x) => x.riderId === riderId && x.driverId === driverId && x.trip === t);
+    if (same) same.seats = (same.seats ?? 1) + seats;
+    else a.push({ riderId, driverId, trip: t, seats });
+    // Moving a car's worth of a group drops its old time/order so it is re-timed.
+    a = a.map((x) => (x.riderId === riderId ? { ...x, order: undefined } : x));
+  }
+  return { assignments: a.map(({ riderId, driverId, trip, seats, order }) => ({ riderId, driverId, trip, seats, order })), waitlist: w };
 }
 
 /** A driver can't make it: keep everyone else where they are, re-place the affected riders. */

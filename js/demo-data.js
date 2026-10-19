@@ -60,6 +60,7 @@ export function makeDemoState(now = new Date()) {
     ...["r-mary", "r-peter", "r-amara", "r-tobi", "r-lydia", "r-david", "r-faith", "r-joy", "r-kofi", "r-isaac"].map((id) => mk(id, first)),
   ];
   requests[0].rideHome = true;
+  requests.find((r) => r.riderId === "r-faith").extraPeople = 2; // Faith is bringing two children
 
   // Ruth (second trip) is free the first Sunday; Daniel is away the second.
   const weeks = [

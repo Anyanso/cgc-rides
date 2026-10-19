@@ -142,3 +142,66 @@ test("150 riders and 25 drivers plan quickly and never overfill a car", () => {
   for (const n of perTrip.values()) assert.ok(n <= 4);
   assert.equal(new Set(p.assignments.map((a) => a.riderId)).size, p.assignments.length);
 });
+
+// ---- groups: people coming with a rider
+
+const party = (id, lat, lng, extra, canSplit) => rider(id, lat, lng, { extraPeople: extra, canSplit });
+const carsOf = (p, id) => p.assignments.filter((a) => a.riderId === id);
+
+test("a group that fits one car stays together and counts every seat", () => {
+  const d = driver("d", 52.09, -106.62, { seats: 4 });
+  const p = run([d], [party("g", 52.095, -106.625, 2, false), rider("solo", 52.1, -106.63)]);
+  assert.equal(carsOf(p, "g").length, 1);
+  assert.equal(carsOf(p, "g")[0].seats, 3);
+  assert.equal(p.waitlist.length, 0);
+  assert.equal(p.stats.seatsUsed, 4);
+});
+
+test("a group of 7 who want to stay together goes on the waitlist and the reason says why", () => {
+  const drivers = [driver("a", 52.09, -106.62, { seats: 4 }), driver("b", 52.1, -106.63, { seats: 3 })];
+  const p = run(drivers, [party("mary", 52.095, -106.625, 6, false)]);
+  assert.equal(p.assignments.length, 0);
+  assert.equal(p.waitlist[0].seats, 7);
+  assert.match(p.waitlist[0].reason, /Needs 7 seats together/);
+  assert.match(p.waitlist[0].reason, /split/);
+});
+
+test("when they say splitting is OK, the group is spread across cars and every seat is counted", () => {
+  const drivers = [driver("a", 52.09, -106.62, { seats: 4 }), driver("b", 52.1, -106.63, { seats: 3 })];
+  const p = run(drivers, [party("mary", 52.095, -106.625, 6, true)]);
+  const mine = carsOf(p, "mary");
+  assert.equal(mine.length, 2);
+  assert.equal(mine.reduce((n, a) => n + a.seats, 0), 7);
+  assert.equal(p.waitlist.length, 0);
+  assert.ok(new Set(mine.map((a) => `${a.driverId}|${a.trip}`)).size === 2, "one stop per car");
+  assert.equal(p.warnings.filter((w) => w.code === "split_not_ok").length, 0);
+});
+
+test("if even splitting can't seat everyone, the leftover seats are waitlisted", () => {
+  const p = run([driver("a", 52.09, -106.62, { seats: 3 })], [party("mary", 52.095, -106.625, 6, true)]);
+  assert.equal(carsOf(p, "mary").reduce((n, a) => n + a.seats, 0), 3);
+  assert.equal(p.waitlist[0].seats, 4);
+  assert.match(p.waitlist[0].reason, /Seated 3 of 7/);
+});
+
+test("evaluate flags a group split across cars when they didn't agree, and over-full cars by people", () => {
+  const drivers = [driver("a", 52.09, -106.62, { seats: 2 }), driver("b", 52.1, -106.63, { seats: 3 })];
+  const g = party("g", 52.095, -106.625, 2, false);
+  const ev = evaluate({ church, drivers, riders: [g], travel, date: DATE,
+    assignments: [{ riderId: "g", driverId: "a", trip: 1, seats: 2 }, { riderId: "g", driverId: "b", trip: 1, seats: 1 }] });
+  assert.ok(ev.warnings.some((w) => w.code === "split_not_ok"));
+  const over = evaluate({ church, drivers, riders: [g], travel, date: DATE, assignments: [{ riderId: "g", driverId: "a", trip: 1, seats: 3 }] });
+  assert.ok(over.warnings.some((w) => w.code === "over_seats"));
+});
+
+test("re-planning after a cancellation keeps others put and re-places only the missing seats", () => {
+  const drivers = [driver("a", 52.09, -106.62, { seats: 4 }), driver("b", 52.1, -106.63, { seats: 4 }), driver("c", 52.08, -106.61, { seats: 4 })];
+  const riders = [party("g", 52.095, -106.625, 3, true), rider("x", 52.1, -106.64)];
+  const first = run(drivers, riders);
+  const victim = first.assignments.find((a) => a.riderId === "g").driverId;
+  const keep = first.assignments.filter((a) => a.driverId !== victim);
+  const again = plan({ church, drivers: drivers.map((d) => (d.id === victim ? { ...d, available: false } : d)), riders, travel, date: DATE, keep });
+  const seated = carsOf(again, "g").reduce((n, a) => n + a.seats, 0) + (again.waitlist.find((w) => w.riderId === "g")?.seats || 0);
+  assert.equal(seated, 4);
+  assert.ok(!again.assignments.some((a) => a.driverId === victim));
+});

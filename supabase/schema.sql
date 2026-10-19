@@ -74,6 +74,8 @@ create table if not exists ride_requests (
   rider_id   uuid not null references profiles (id) on delete cascade,
   sunday     date not null check (extract(dow from sunday) = 0),
   ride_home  boolean not null default false,
+  extra_people int not null default 0 check (extra_people between 0 and 10),  -- people coming with the rider; each needs a seat
+  can_split  boolean not null default false,   -- OK to seat the group in different cars if no single car fits
   note       text,
   status     text not null default 'requested' check (status in ('requested', 'cancelled')),
   created_at timestamptz not null default now(),
@@ -99,13 +101,15 @@ create table if not exists assignments (
   pickup_min    int,        -- minutes after midnight
   ready_by_min  int,
   arrive_min    int,
-  unique (plan_id, rider_id)
+  seats         int not null default 1 check (seats >= 1),   -- people in this car (rider plus anyone with them)
+  unique (plan_id, rider_id, driver_id, trip)
 );
 
 create table if not exists waitlist (
   plan_id  uuid not null references plans (id) on delete cascade,
   rider_id uuid not null references profiles (id) on delete cascade,
   reason   text,
+  seats    int not null default 1,   -- seats still needed
   primary key (plan_id, rider_id)
 );
 
@@ -279,24 +283,27 @@ create policy consent_leader     on consent_log for select using (is_leader());
 -- ---------------------------------------------------------------- functions the app calls
 
 -- A rider's own requests, with driver details ONLY once the leader has approved the plan.
+-- A group split across cars comes back as one row per car.
 create or replace function my_rides()
-returns table (sunday date, status text, ride_home boolean, note text,
+returns table (sunday date, status text, ride_home boolean, note text, extra_people int, can_split boolean,
                driver_name text, driver_phone text, vehicle text,
-               trip int, pickup_min int, ready_by_min int, arrive_min int)
+               seats int, trip int, pickup_min int, ready_by_min int, arrive_min int, waitlisted_seats int)
 language sql stable security definer set search_path = public, pg_temp as $$
   select r.sunday,
          case when r.status = 'cancelled' then 'cancelled'
               when p.status = 'approved' and a.id is not null then 'seated'
               when p.status = 'approved' and w.rider_id is not null then 'waitlisted'
               else 'requested' end,
-         r.ride_home, r.note,
+         r.ride_home, r.note, r.extra_people, r.can_split,
          case when r.status <> 'cancelled' and p.status = 'approved' then d.full_name end,
          case when r.status <> 'cancelled' and p.status = 'approved' then d.phone end,
          case when r.status <> 'cancelled' and p.status = 'approved' then d.vehicle end,
+         case when r.status <> 'cancelled' and p.status = 'approved' then a.seats end,
          case when r.status <> 'cancelled' and p.status = 'approved' then a.trip end,
          case when r.status <> 'cancelled' and p.status = 'approved' then a.pickup_min end,
          case when r.status <> 'cancelled' and p.status = 'approved' then a.ready_by_min end,
-         case when r.status <> 'cancelled' and p.status = 'approved' then a.arrive_min end
+         case when r.status <> 'cancelled' and p.status = 'approved' then a.arrive_min end,
+         case when r.status <> 'cancelled' and p.status = 'approved' then w.seats end
   from ride_requests r
   join profiles me on me.id = r.rider_id and me.user_id = auth.uid()
   left join plans p on p.sunday = r.sunday
@@ -304,7 +311,7 @@ language sql stable security definer set search_path = public, pg_temp as $$
   left join profiles d on d.id = a.driver_id
   left join waitlist w on w.plan_id = p.id and w.rider_id = r.rider_id
   where r.sunday >= today_regina()
-  order by r.sunday
+  order by r.sunday, a.trip, a.stop_order
 $$;
 
 -- A driver's pickup list for one Sunday: ONLY their own riders, ONLY after approval.
@@ -313,12 +320,12 @@ returns table (trip int, stop_order int, pickup_min int, ready_by_min int, arriv
                rider_name text, rider_phone text, address text, neighbourhood text,
                lat double precision, lng double precision,
                minor boolean,
-               rider_notes text, request_note text, ride_home boolean)
+               rider_notes text, request_note text, ride_home boolean, extra_people int, seats int, party_total int)
 language sql stable security definer set search_path = public, pg_temp as $$
   select a.trip, a.stop_order, a.pickup_min, a.ready_by_min, a.arrive_min,
          r.full_name, r.phone, r.home_address, r.neighbourhood, r.lat, r.lng,
          r.minor,
-         r.notes, q.note, coalesce(q.ride_home, false)
+         r.notes, q.note, coalesce(q.ride_home, false), coalesce(q.extra_people, 0), a.seats, 1 + coalesce(q.extra_people, 0)
   from assignments a
   join plans p on p.id = a.plan_id and p.status = 'approved' and p.sunday = p_sunday
   join profiles me on me.id = a.driver_id and me.user_id = auth.uid()
@@ -403,13 +410,14 @@ begin
   delete from assignments where plan_id = pid;
   delete from waitlist where plan_id = pid;
 
-  insert into assignments (plan_id, rider_id, driver_id, trip, stop_order, pickup_min, ready_by_min, arrive_min)
+  insert into assignments (plan_id, rider_id, driver_id, trip, stop_order, pickup_min, ready_by_min, arrive_min, seats)
   select pid, (e ->> 'riderId')::uuid, (e ->> 'driverId')::uuid, coalesce((e ->> 'trip')::int, 1),
-         coalesce((e ->> 'order')::int, 0), (e ->> 'pickupMin')::int, (e ->> 'readyByMin')::int, (e ->> 'arriveMin')::int
+         coalesce((e ->> 'order')::int, 0), (e ->> 'pickupMin')::int, (e ->> 'readyByMin')::int, (e ->> 'arriveMin')::int,
+         greatest(coalesce((e ->> 'seats')::int, 1), 1)
   from jsonb_array_elements(coalesce(p_assignments, '[]'::jsonb)) e;
 
-  insert into waitlist (plan_id, rider_id, reason)
-  select pid, (e ->> 'riderId')::uuid, e ->> 'reason'
+  insert into waitlist (plan_id, rider_id, reason, seats)
+  select pid, (e ->> 'riderId')::uuid, e ->> 'reason', greatest(coalesce((e ->> 'seats')::int, 1), 1)
   from jsonb_array_elements(coalesce(p_waitlist, '[]'::jsonb)) e
   on conflict do nothing;
 
@@ -421,10 +429,11 @@ begin
   end if;
 
   if exists (
-    select 1 from (select driver_id, trip, count(*) c from assignments where plan_id = pid group by 1, 2) x
+    select 1 from (
+      select driver_id, trip, sum(seats) c from assignments where plan_id = pid group by 1, 2) x
     join profiles d on d.id = x.driver_id where x.c > d.seats
   ) then
-    raise exception 'A car has more riders than seats.';
+    raise exception 'A car has more people than seats (counting everyone coming with each rider).';
   end if;
 
   return pid;

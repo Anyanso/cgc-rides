@@ -24,9 +24,9 @@ export async function createLiveStore(config, { createClient } = {}) {
   const from = (t) => sb.from(t);
   const getUid = () => { if (!user) throw new Error("Please sign in."); return user.id; };
 
-  const requestFrom = (r) => ({ id: r.id, riderId: r.rider_id, sunday: r.sunday, rideHome: r.ride_home, note: r.note, status: r.status });
-  const rideFrom = (r) => camelRow(r, { sunday: "sunday", status: "status", rideHome: "ride_home", note: "note", driverName: "driver_name", driverPhone: "driver_phone", vehicle: "vehicle", trip: "trip", pickupMin: "pickup_min", readyByMin: "ready_by_min", arriveMin: "arrive_min" });
-  const routeFrom = (r) => camelRow(r, { trip: "trip", order: "stop_order", pickupMin: "pickup_min", readyByMin: "ready_by_min", arriveMin: "arrive_min", riderName: "rider_name", riderPhone: "rider_phone", address: "address", neighbourhood: "neighbourhood", lat: "lat", lng: "lng", minor: "minor", riderNotes: "rider_notes", requestNote: "request_note", rideHome: "ride_home" });
+  const requestFrom = (r) => ({ id: r.id, riderId: r.rider_id, sunday: r.sunday, rideHome: r.ride_home, note: r.note, extraPeople: r.extra_people || 0, canSplit: !!r.can_split, status: r.status });
+  const rideFrom = (r) => camelRow(r, { sunday: "sunday", status: "status", rideHome: "ride_home", note: "note", extraPeople: "extra_people", canSplit: "can_split", driverName: "driver_name", driverPhone: "driver_phone", vehicle: "vehicle", seats: "seats", trip: "trip", pickupMin: "pickup_min", readyByMin: "ready_by_min", arriveMin: "arrive_min", waitlistedSeats: "waitlisted_seats" });
+  const routeFrom = (r) => camelRow(r, { trip: "trip", order: "stop_order", pickupMin: "pickup_min", readyByMin: "ready_by_min", arriveMin: "arrive_min", riderName: "rider_name", riderPhone: "rider_phone", address: "address", neighbourhood: "neighbourhood", lat: "lat", lng: "lng", minor: "minor", riderNotes: "rider_notes", requestNote: "request_note", rideHome: "ride_home", extraPeople: "extra_people", seats: "seats", partyTotal: "party_total" });
 
   return {
     mode: "live",
@@ -73,9 +73,9 @@ export async function createLiveStore(config, { createClient } = {}) {
 
     // ---- rider
     async myRides() { return (await rpc("my_rides")).map(rideFrom); },
-    async requestRide(sunday, { rideHome = false, note = null } = {}) {
+    async requestRide(sunday, { rideHome = false, note = null, extraPeople = 0, canSplit = false } = {}) {
       const me = await this.getMe();
-      fail(await from("ride_requests").upsert({ rider_id: me.id, sunday, ride_home: rideHome, note, status: "requested" }, { onConflict: "rider_id,sunday" }));
+      fail(await from("ride_requests").upsert({ rider_id: me.id, sunday, ride_home: rideHome, note, extra_people: extraPeople, can_split: canSplit, status: "requested" }, { onConflict: "rider_id,sunday" }));
     },
     async cancelRide(sunday) {
       const me = await this.getMe();
@@ -116,8 +116,8 @@ export async function createLiveStore(config, { createClient } = {}) {
       for (const p of pl.data) {
         plans[p.sunday] = {
           sunday: p.sunday, status: p.status, summary: p.summary, approvedAt: p.approved_at,
-          assignments: as.data.filter((a) => a.plan_id === p.id).map((a) => ({ riderId: a.rider_id, driverId: a.driver_id, trip: a.trip, order: a.stop_order, pickupMin: a.pickup_min, readyByMin: a.ready_by_min, arriveMin: a.arrive_min })),
-          waitlist: wl.data.filter((w) => w.plan_id === p.id).map((w) => ({ riderId: w.rider_id, reason: w.reason })),
+          assignments: as.data.filter((a) => a.plan_id === p.id).map((a) => ({ riderId: a.rider_id, driverId: a.driver_id, trip: a.trip, order: a.stop_order, seats: a.seats, pickupMin: a.pickup_min, readyByMin: a.ready_by_min, arriveMin: a.arrive_min })),
+          waitlist: wl.data.filter((w) => w.plan_id === p.id).map((w) => ({ riderId: w.rider_id, reason: w.reason, seats: w.seats })),
         };
       }
       return {
@@ -140,8 +140,15 @@ export async function createLiveStore(config, { createClient } = {}) {
       fail(res);
       return res.data.id;
     },
-    async addRequest(riderId, sunday, { rideHome = false, note = null } = {}) {
-      fail(await from("ride_requests").upsert({ rider_id: riderId, sunday, ride_home: rideHome, note, status: "requested" }, { onConflict: "rider_id,sunday" }));
+    async addRequest(riderId, sunday, { rideHome = false, note = null, extraPeople = 0, canSplit = false } = {}) {
+      fail(await from("ride_requests").upsert({ rider_id: riderId, sunday, ride_home: rideHome, note, extra_people: extraPeople, can_split: canSplit, status: "requested" }, { onConflict: "rider_id,sunday" }));
+    },
+    async updateRequest(riderId, sunday, patch) {
+      const row = {};
+      if ("canSplit" in patch) row.can_split = patch.canSplit;
+      if ("extraPeople" in patch) row.extra_people = patch.extraPeople;
+      if ("note" in patch) row.note = patch.note;
+      fail(await from("ride_requests").update(row).eq("rider_id", riderId).eq("sunday", sunday));
     },
     async removeRequest(riderId, sunday) {
       fail(await from("ride_requests").update({ status: "cancelled" }).eq("rider_id", riderId).eq("sunday", sunday));

@@ -24,6 +24,8 @@ function riderBadges(r) {
     r.priority && badge("Priority", "gold"),
     r.minor && badge("Under 18", "red"),
     r.rideHome && badge("Ride home too", "muted"),
+    r.extraPeople > 0 && badge(`+${r.extraPeople} with them`, "clay"),
+    r.extraPeople > 0 && r.canSplit && badge("OK to split", "muted"),
     r.geoSource === "neighbourhood" && badge("Location approximate", "muted"),
     ("lat" in r && r.lat == null) && badge("Not on map", "red"),
   ].filter(Boolean).join(" ");
@@ -104,7 +106,7 @@ export function profileForm(S, p = {}, { leaderEditing = false, registering = fa
       ${isDriver ? `<label class="field">Driver status<select name="status">${["pending", "cleared", "suspended"].map((s) => `<option ${p.status === s ? "selected" : ""}>${s}</option>`).join("")}</select></label>
       <p class="small muted">Set the status to <strong>cleared</strong> once you have vetted this driver. The records below are optional notes for you.</p>${chk("licenceOk", p.licenceOk, "Licence seen (optional note)")}${chk("insuranceOk", p.insuranceOk, "Insurance seen (optional note)")}
       <label class="field">Police check expiry (optional note)<input name="policeCheckExpiry" type="date" value="${esc(p.policeCheckExpiry || "")}"></label>` : ""}
-      ${addingForSunday ? chk("needsRide", true, `Needs a ride on ${esc(fmtDate(addingForSunday))}`) + chk("consentByPhone", false, "They agreed by phone to receive ride texts") : ""}
+      ${addingForSunday ? chk("needsRide", true, `Needs a ride on ${esc(fmtDate(addingForSunday))}`) + `<label class="field">People coming with them<input name="extraPeople" type="number" min="0" max="10" value="0"></label>` + chk("canSplit", false, "They said it's OK to split across cars") + chk("consentByPhone", false, "They agreed by phone to receive ride texts") : ""}
     </fieldset>` : "";
   return `<form data-form="profile" class="stack" ${p.id ? `data-id="${esc(p.id)}"` : ""}>
     ${roleChoice}
@@ -140,29 +142,37 @@ function consentBlock(S) {
 export function riderView(S) {
   const me = S.me;
   if (S.tab === "details") return `<section class="card"><h2>My details</h2>${profileForm(S, me)}</section>`;
+  const requestForm = (sunday, again) => `<form data-form="request" data-sunday="${esc(sunday)}" class="stack">
+            <label class="field">How many people are coming with you? <span class="small muted">(not counting you; each needs a seat)</span>
+              <input name="extraPeople" type="number" inputmode="numeric" min="0" max="10" value="0"></label>
+            <label class="check"><input type="checkbox" name="canSplit"> <span>It's OK to split us across different cars if no single car has room for everyone</span></label>
+            <label class="check"><input type="checkbox" name="rideHome"> I need a ride home too</label>
+            <label class="field">Note for the leader (optional)<input name="note" placeholder="e.g. bringing a small child"></label>
+            <button class="btn primary" type="submit">${again ? "Ask again" : "I need a ride"}</button></form>`;
   const cards = S.sundays.map((sunday) => {
-    const ride = S.rides.find((r) => r.sunday === sunday);
+    const rows = S.rides.filter((r) => r.sunday === sunday);
+    const ride = rows[0];
     const closed = isClosed(sunday, S.now);
+    const party = ride ? 1 + (ride.extraPeople || 0) : 1;
     let body;
     if (!ride || ride.status === "cancelled") {
       body = closed
         ? `<p class="muted">Requests for this Sunday have closed. Please contact the transport leader.</p>`
-        : `<form data-form="request" data-sunday="${esc(sunday)}" class="stack">
-            <label class="check"><input type="checkbox" name="rideHome"> I need a ride home too</label>
-            <label class="field">Note for the leader (optional)<input name="note" placeholder="e.g. bringing a small child"></label>
-            <button class="btn primary" type="submit">${ride ? "Ask again" : "I need a ride"}</button></form>${ride ? `<p class="small muted">You cancelled this one.</p>` : ""}`;
+        : `${requestForm(sunday, !!ride)}${ride ? `<p class="small muted">You cancelled this one.</p>` : ""}`;
     } else if (ride.status === "seated") {
-      body = `<div class="driver">
-          <p><strong>${esc(ride.driverName)}</strong> will pick you up${ride.vehicle ? ` in a ${esc(ride.vehicle)}` : ""}.</p>
-          <p class="bigtime">Around ${esc(fmtMin(ride.pickupMin))}</p>
-          <p>Please be ready by <strong>${esc(fmtMin(ride.readyByMin))}</strong> to avoid delays.</p>
-          ${ride.driverPhone ? `<p>Driver's number: ${telLink(ride.driverPhone)}</p>` : ""}
-          ${ride.rideHome ? `<p class="small muted">You asked for a ride home too. The leader will confirm that separately.</p>` : ""}
-        </div>${btn("I can't make it", "cancel-ride", { sunday }, "danger")}`;
+      body = rows.map((r) => `<div class="driver">
+          <p><strong>${esc(r.driverName)}</strong> will pick up ${party > 1 ? `${esc(r.seats)} of your group of ${esc(party)}` : "you"}${r.vehicle ? ` in a ${esc(r.vehicle)}` : ""}.</p>
+          <p class="bigtime">Around ${esc(fmtMin(r.pickupMin))}</p>
+          <p>Please be ready by <strong>${esc(fmtMin(r.readyByMin))}</strong> to avoid delays.</p>
+          ${r.driverPhone ? `<p>Driver's number: ${telLink(r.driverPhone)}</p>` : ""}
+        </div>`).join("") +
+        (ride.waitlistedSeats ? banner("warn", `${esc(ride.waitlistedSeats)} more of your group still need a seat. The transport leader will contact you.`) : "") +
+        (ride.rideHome ? `<p class="small muted">You asked for a ride home too. The leader will confirm that separately.</p>` : "") +
+        btn("I can't make it", "cancel-ride", { sunday }, "danger");
     } else if (ride.status === "waitlisted") {
-      body = `<p>We're still working on a seat for you. The transport leader will message you as soon as we have one.</p>${btn("I can't make it", "cancel-ride", { sunday }, "danger")}`;
+      body = `<p>We're still working on ${party > 1 ? "seats for your group" : "a seat for you"}. The transport leader will message you as soon as we have ${party > 1 ? "them" : "one"}.</p>${btn("I can't make it", "cancel-ride", { sunday }, "danger")}`;
     } else {
-      body = `<p>${badge("Requested", "gold")} The leader will confirm your driver after requests close (Saturday noon).</p>${btn("Cancel my request", "cancel-ride", { sunday }, "ghost")}`;
+      body = `<p>${badge("Requested", "gold")} ${party > 1 ? `For ${esc(party)} people. ` : ""}The leader will confirm your driver after requests close (Saturday noon).${party > 1 ? (ride.canSplit ? " You said it's OK to split across cars." : " You asked to stay together; if that isn't possible the leader will ask you.") : ""}</p>${btn("Cancel my request", "cancel-ride", { sunday }, "ghost")}`;
     }
     return `<article class="card"><h3>${esc(fmtDate(sunday, { weekday: "long", month: "long", day: "numeric" }))}</h3>${body}</article>`;
   }).join("");
@@ -201,7 +211,7 @@ export function driverView(S) {
         return `<div class="route"><h4>${trips.length > 1 ? `Trip ${t}` : "Your pickups"}</h4>
           <ol class="stops">${stops.map((s) => `<li>
             <div class="stoptime">${esc(fmtMin(s.pickupMin))}<span class="small muted">ready ${esc(fmtMin(s.readyByMin))}</span></div>
-            <div><strong>${esc(s.riderName)}</strong> ${riderBadges({ minor: s.minor, rideHome: s.rideHome })}<br>
+            <div><strong>${esc(s.riderName)}</strong> ${riderBadges({ minor: s.minor, rideHome: s.rideHome })}${s.seats > 1 ? ` ${badge(`${s.seats} people`, "clay")}` : ""}${s.partyTotal > s.seats ? `<br><span class="small">Part of a group of ${esc(s.partyTotal)}; the rest ride with another driver.</span>` : ""}<br>
             ${esc(s.address || "")}${s.neighbourhood ? ` <span class="muted">· ${esc(s.neighbourhood)}</span>` : ""}<br>
             ${telLink(s.riderPhone)}
             ${s.riderNotes ? `<br><em>${esc(s.riderNotes)}</em>` : ""}${s.requestNote ? `<br><em>${esc(s.requestNote)}</em>` : ""}</div></li>`).join("")}</ol>
@@ -233,7 +243,7 @@ function carOptions(S, sunday) {
 
 function moveSelect(S, riderId, current) {
   const opts = carOptions(S, S.sunday);
-  return `<select class="move" data-act-change="move" data-rider="${esc(riderId)}" aria-label="Move rider">
+  return `<select class="move" data-act-change="move" data-rider="${esc(riderId)}" data-from="${esc(current)}" aria-label="Move rider">
     <option value="">Move to…</option>
     ${opts.filter((o) => o.value !== current).map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join("")}
     ${current !== "wait" ? `<option value="wait">Waitlist</option>` : ""}</select>`;
@@ -244,7 +254,8 @@ function planTab(S) {
   const people = ridersMap(S);
   const asking = S.data.requests.filter((r) => r.sunday === sunday && r.status !== "cancelled");
   const cars = carOptions(S, sunday);
-  const seats = [...new Map(cars.map((c) => [c.value, c])).values()].reduce((n, c) => n + c.d.seats, 0);
+  const seats = cars.reduce((n, c) => n + c.d.seats, 0);
+  const askingPeople = asking.reduce((n, r) => n + 1 + (r.extraPeople || 0), 0);
   const pv = S.planView;
   const chips = S.sundays.map((s) => {
     const n = S.data.requests.filter((r) => r.sunday === s && r.status !== "cancelled").length;
@@ -255,9 +266,9 @@ function planTab(S) {
   let html = `<div class="chips">${chips}</div>`;
   if (S.churchWarning) html += banner("warn", `<strong>Church location not set.</strong> ${esc(S.churchWarning)}`);
   if (S.mode === "demo") html += banner("info", `Demo plans use a placeholder church location (${esc(S.demoChurchLabel)}).`);
-  html += `<div class="tiles"><div class="tile"><b>${asking.length}</b>asking</div><div class="tile"><b>${seats}</b>seats offered</div>
-    <div class="tile"><b>${pv?.assignments.length ?? 0}</b>seated</div><div class="tile"><b>${pv?.waitlist.length ?? 0}</b>waitlist</div></div>`;
-  if (asking.length > seats) html += banner("warn", `${asking.length} riders are asking but only ${seats} seats are offered. Ask drivers about a second trip, or recruit another driver.`);
+  html += `<div class="tiles"><div class="tile"><b>${askingPeople}</b>people asking</div><div class="tile"><b>${seats}</b>seats offered</div>
+    <div class="tile"><b>${pv?.assignments.reduce((n, a) => n + (a.seats ?? 1), 0) ?? 0}</b>seated</div><div class="tile"><b>${pv?.waitlist.reduce((n, w) => n + (w.seats ?? 1), 0) ?? 0}</b>waiting</div></div>`;
+  if (askingPeople > seats) html += banner("warn", `${askingPeople} people are asking (counting those coming with riders) but only ${seats} seats are offered. Ask drivers about a second trip, or recruit another driver.`);
 
   const status = !pv ? badge("No plan yet", "muted") : pv.status === "approved" ? badge(pv.dirty ? "Approved · changes not saved" : "Approved and shared", "ok") : badge(pv.dirty ? "Draft · not saved" : "Draft saved", "gold");
   html += `<div class="row wrap">${status}${S.busy ? `<span class="small muted">Working…</span>` : ""}</div>
@@ -270,7 +281,7 @@ function planTab(S) {
   if (pv?.warnings?.length) html += banner("warn", `<strong>Check these:</strong><ul>${pv.warnings.map((w) => `<li>${esc(w.text)}</li>`).join("")}</ul>`);
 
   if (!pv) {
-    html += `<h3>Asking for a ride (${asking.length})</h3><ul class="plain">${asking.map((r) => { const p = people.get(r.riderId); return p ? `<li><strong>${esc(p.name)}</strong> ${esc(p.neighbourhood || "")} ${riderBadges({ ...p, rideHome: r.rideHome })}</li>` : ""; }).join("") || "<li class='muted'>Nobody yet.</li>"}</ul>`;
+    html += `<h3>Asking for a ride (${asking.length})</h3><ul class="plain">${asking.map((r) => { const p = people.get(r.riderId); return p ? `<li><strong>${esc(p.name)}</strong> ${esc(p.neighbourhood || "")} ${riderBadges({ ...p, rideHome: r.rideHome, extraPeople: r.extraPeople, canSplit: r.canSplit })}${r.note ? `<br><span class="small muted">${esc(r.note)}</span>` : ""}</li>` : ""; }).join("") || "<li class='muted'>Nobody yet.</li>"}</ul>`;
     return html;
   }
 
@@ -282,13 +293,15 @@ function planTab(S) {
     return `<article class="card car"><header><h3>${esc(d?.name || "Driver")}${car.trip > 1 ? " · trip 2" : ""}</h3>
       <span class="small muted">${car.stops.length}/${esc(d?.seats ?? "?")} seats${d?.vehicle ? ` · ${esc(d.vehicle)}` : ""}${meta ? ` · leaves ${esc(fmtMin(meta.departMin))} · arrives ${esc(fmtMin(meta.arriveMin))}` : ""}</span></header>
       <ol class="stops">${car.stops.map((s) => { const r = people.get(s.riderId); return `<li><div class="stoptime">${esc(fmtMin(s.pickupMin))}<span class="small muted">ready ${esc(fmtMin(s.readyByMin))}</span></div>
-        <div><strong>${esc(r?.name || "Rider")}</strong> ${riderBadges({ ...(r || {}), rideHome: asking.find((q) => q.riderId === s.riderId)?.rideHome })}<br><span class="small">${esc(r?.address || "")}${r?.neighbourhood ? ` · ${esc(r.neighbourhood)}` : ""}</span><br>${moveSelect(S, s.riderId, `${car.driverId}|${car.trip}`)}</div></li>`; }).join("")}</ol></article>`;
+        <div><strong>${esc(r?.name || "Rider")}</strong> ${riderBadges({ ...(r || {}), rideHome: asking.find((q) => q.riderId === s.riderId)?.rideHome, extraPeople: asking.find((q) => q.riderId === s.riderId)?.extraPeople, canSplit: asking.find((q) => q.riderId === s.riderId)?.canSplit })}${s.seats > 1 ? ` ${badge(`${s.seats} seats`, "gold")}` : ""}<br><span class="small">${esc(r?.address || "")}${r?.neighbourhood ? ` · ${esc(r.neighbourhood)}` : ""}</span>${asking.find((q) => q.riderId === s.riderId)?.note ? `<br><em class="small">${esc(asking.find((q) => q.riderId === s.riderId).note)}</em>` : ""}<br>${moveSelect(S, s.riderId, `${car.driverId}|${car.trip}`)}</div></li>`; }).join("")}</ol></article>`;
   }).join("") || `<p class="muted">Nobody is seated yet.</p>`;
 
   if (pv.waitlist.length) {
     html += `<h3>Waiting list (${pv.waitlist.length})</h3>` + pv.waitlist.map((w) => {
       const r = people.get(w.riderId);
-      return `<article class="card warn"><strong>${esc(r?.name || "Rider")}</strong> ${r ? riderBadges(r) : ""}<p class="small">${esc(w.reason)}</p>${moveSelect(S, w.riderId, "wait")}</article>`;
+      const q = asking.find((x) => x.riderId === w.riderId);
+      return `<article class="card warn"><strong>${esc(r?.name || "Rider")}</strong> ${r ? riderBadges({ ...r, extraPeople: q?.extraPeople, canSplit: q?.canSplit }) : ""} ${w.seats > 1 ? badge(`needs ${w.seats} seats`, "gold") : ""}<p class="small">${esc(w.reason)}</p>${q?.note ? `<p class="small"><em>${esc(q.note)}</em></p>` : ""}
+        ${w.seats > 1 && q && !q.canSplit ? `<p class="small">${btn("They agree to be split across cars", "split-ok", { rider: w.riderId }, "primary")}</p>` : ""}${moveSelect(S, w.riderId, "wait")}</article>`;
     }).join("");
   }
   if (pv.excluded?.length) {
@@ -346,7 +359,7 @@ function textsTab(S) {
     for (const a of asg) {
       const r = people.get(a.riderId); const d = people.get(a.driverId);
       if (!r || !d) continue;
-      html += copyBlock(`${r.name}${r.textsConsentAt ? "" : " (no text consent: call instead)"}`, T.riderDetails(sunday, r, d, a), `${r.phone || "no phone on file"}`);
+      html += copyBlock(`${r.name}${r.textsConsentAt ? "" : " (no text consent: call instead)"}`, T.riderDetails(sunday, r, d, a, (S.data.requests.find((q) => q.riderId === r.id && q.sunday === sunday)?.extraPeople || 0) + 1), `${r.phone || "no phone on file"}`);
     }
     html += `<h3>Pickup list to each driver</h3>`;
     const cars = groupCars(asg, S.data.profiles);

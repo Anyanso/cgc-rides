@@ -43,11 +43,11 @@ export function validatePlan({ profilesById, sunday, assignments }) {
     if (!d) throw new Error("Unknown driver in plan.");
     if (d.status !== "cleared") throw new Error("Only cleared drivers can be given riders.");
     const key = `${a.driverId}|${a.trip || 1}`;
-    per.set(key, (per.get(key) || 0) + 1);
+    per.set(key, (per.get(key) || 0) + (a.seats ?? 1));
   }
   for (const [key, n] of per) {
     const d = profilesById.get(key.split("|")[0]);
-    if (n > (d.seats || 0)) throw new Error("A car has more riders than seats.");
+    if (n > (d.seats || 0)) throw new Error("A car has more people than seats (counting everyone coming with each rider).");
   }
 }
 

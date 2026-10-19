@@ -60,14 +60,16 @@ test("demo: the plan can't be saved with an unsafe car (same rule as the databas
   const bad = [{ riderId: "r-mary", driverId: "d-esther", trip: 1 }];
   await assert.rejects(() => c.store.savePlan(c.sunday, "draft", {}, bad, []), /cleared drivers/);
   const full = ["r-mary", "r-peter", "r-amara"].map((r) => ({ riderId: r, driverId: "d-samuel", trip: 1 }));
-  await assert.rejects(() => c.store.savePlan(c.sunday, "draft", {}, full, []), /more riders than seats/);
+  await assert.rejects(() => c.store.savePlan(c.sunday, "draft", {}, full, []), /more people than seats/);
 });
 
 test("demo: moving a rider re-times the plan; a driver cancelling re-places only their riders", async () => {
   const c = await leaderCtx();
   const p = await plan(c);
   const to = "d-ruth|1";
-  const moved = applyMove(p, "r-david", to);
+  const old = p.assignments.find((a) => a.riderId === "r-david");
+  const moved = applyMove(p, "r-david", to, `${old.driverId}|${old.trip}`);
+  assert.equal(moved.assignments.filter((a) => a.riderId === "r-david").length, 1);
   const r2 = await recompute({ data: c.data, sunday: c.sunday, church, config: CONFIG, ...moved, fetchFn: offline });
   assert.equal(r2.assignments.find((a) => a.riderId === "r-david").driverId, "d-ruth");
 
@@ -137,4 +139,37 @@ test("live store: calls the right tables and functions (fake client; not a real 
   assert.deepEqual(rpcs, ["my_rides", "my_route", "driver_cant_make_it", "save_plan", "give_text_consent"]);
   assert.deepEqual(log.find((l) => l[1] === "save_plan")[2], { p_sunday: "2026-10-25", p_status: "draft", p_summary: {}, p_assignments: [], p_waitlist: [] });
   assert.ok(log.some((l) => l[0] === "otp"));
+});
+
+test("demo: a rider asks with people coming along; the leader can agree to a split; drivers see their share", async () => {
+  const c = await leaderCtx();
+  c.store.viewAs("r-lydia");
+  await c.store.requestRide(c.sunday, { extraPeople: 6, canSplit: false, note: "Bringing my family" });
+  c.store.viewAs("leader");
+  const data = await c.store.leaderData();
+  const req = data.requests.find((r) => r.riderId === "r-lydia" && r.sunday === c.sunday);
+  assert.equal(req.extraPeople, 6);
+  const p = await draftPlan({ data, sunday: c.sunday, church, config: CONFIG, fetchFn: offline });
+  const w = p.waitlist.find((x) => x.riderId === "r-lydia");
+  assert.ok(w && w.seats === 7 && /split/.test(w.reason));
+  // Leader asked, they agreed: re-place just that group.
+  await c.store.updateRequest("r-lydia", c.sunday, { canSplit: true });
+  const data2 = await c.store.leaderData();
+  const keep = p.assignments.filter((a) => a.riderId !== "r-lydia");
+  const p2 = await draftPlan({ data: data2, sunday: c.sunday, church, config: CONFIG, keep, fetchFn: offline });
+  for (const a of keep) assert.ok(p2.assignments.some((x) => x.riderId === a.riderId && x.driverId === a.driverId), "others stay put");
+  const placed = p2.assignments.filter((a) => a.riderId === "r-lydia").reduce((n, a) => n + a.seats, 0);
+  const waiting = p2.waitlist.find((x) => x.riderId === "r-lydia")?.seats || 0;
+  assert.equal(placed + waiting, 7);
+  // Approve (use only what fits), then the rider and drivers see their share.
+  await c.store.savePlan(c.sunday, "approved", {}, p2.assignments, p2.waitlist);
+  c.store.viewAs("r-lydia");
+  const rows = await c.store.myRides();
+  const mine = rows.filter((r) => r.sunday === c.sunday);
+  if (placed > 0) { assert.equal(mine.reduce((n, r) => n + (r.seats || 0), 0), placed); assert.ok(mine.every((r) => r.driverName)); }
+  const dId = p2.assignments.find((a) => a.riderId === "r-lydia")?.driverId;
+  if (dId) { c.store.viewAs(dId); const route = await c.store.myRoute(c.sunday); const row = route.find((r) => r.riderName === "Lydia Chen"); assert.ok(row.seats >= 1 && row.partyTotal === 7); }
+  // A car can't be saved over-full by people count.
+  c.store.viewAs("leader");
+  await assert.rejects(() => c.store.savePlan(c.sunday, "draft", {}, [{ riderId: "r-lydia", driverId: "d-samuel", trip: 1, seats: 5 }], []), /more people than seats/);
 });

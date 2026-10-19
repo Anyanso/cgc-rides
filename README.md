@@ -16,6 +16,8 @@ Sunday rides to **Chosen Generation Church** (Saskatoon). Riders ask for a lift,
 
 **Matching.** Each rider goes to the car where they add the fewest minutes on the way to church (real road times from OpenStreetMap routing, straight-line estimate if that's unreachable). Priority riders go first. Seats are the real limit, so drivers can offer a second trip, and anyone left goes on a waiting list **with the reason written out**.
 
+**Groups.** A rider can say how many people are coming with them; each needs a seat. They're also asked if it's OK to split the group across cars. If yes, the app fills cars one after another (fewest cars first); each driver sees "picking up 3 of a group of 7" and the rider sees every driver and time. If they said keep us together and no single car fits, they go on the waiting list with the reason, and a button, "They agree to be split across cars", lets you re-place just that group after you've asked them. Anyone who can't be seated stays on the waiting list with the number of seats still needed.
+
 **Times.** Drivers are scheduled to arrive 15 minutes before the 11:45 service (11:30). Pickup times are worked backward from that along each route; each rider's "be ready by" time is their pickup minus 5 minutes. Change either in `js/config.js`, or set `readyBy: "10:45"` for a fixed ceiling.
 
 **Weekly rhythm.** Thursday: copy the check-in text to the group (opt-in riders; silence means no ride). Saturday noon: requests close. Then draft, review, approve, copy texts. Drivers and riders see nothing until you approve.
@@ -66,7 +68,7 @@ Things to watch: pickup times vs reality (adjust `stopMin` and `maxDetourMin`), 
 
 ## What is and isn't verified
 
-`npm install && npm test` runs 38 tests: the matching engine (rules, second trips, waitlist, 150 riders), the privacy and safety rules **in a real Postgres** (PGlite), the demo store, every screen rendered for every role, and request building/parsing for routing and address lookup.
+`npm install && npm test` runs 44 tests: the matching engine (rules, second trips, waitlist, 150 riders), the privacy and safety rules **in a real Postgres** (PGlite), the demo store, every screen rendered for every role, and request building/parsing for routing and address lookup.
 
 **Not tested from the build environment** (no outside network there): the real Supabase project and email sign-in, and the real OpenStreetMap routing and address services. Do the first live run yourself with the test plan above.
 

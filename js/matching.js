@@ -31,6 +31,10 @@ export const DEFAULTS = {
 
 const opts = (o) => ({ ...DEFAULTS, ...(o || {}) });
 const floor5 = (m) => Math.floor(m / 5) * 5;
+/** Seats a request needs: the rider plus anyone coming with them. */
+export const need = (r) => 1 + Math.max(0, Number(r.extraPeople) || 0);
+const stopSeats = (s) => s.seats ?? need(s.rider);
+const load = (trip) => trip.stops.reduce((n, s) => n + stopSeats(s), 0);
 const hasLoc = (p) => p && p.lat != null && p.lng != null;
 
 export const churchNode = (c) => ({ id: "church", lat: c.lat, lng: c.lng });
@@ -169,13 +173,14 @@ export function evaluate({ church, drivers, riders, assignments, travel, date, o
         if (!hasLoc(r)) warnings.push({ code: "no_location", riderId: r.id, text: `${r.name}: address not located; timing is a guess.` });
         const pi = pairIssue(d, r, date);
         if (pi === "minor_check") warnings.push({ code: "minor_check", riderId: r.id, driverId, text: `${r.name} is under 18 and ${d.name} has no current police check.` });
-        return { id: r.id, rider: r, node: riderNode(r, church), order: a.order };
+        return { id: r.id, rider: r, node: riderNode(r, church), order: a.order, seats: a.seats ?? need(r) };
       });
       const ordered = items.every((i) => typeof i.order === "number")
         ? [...items].sort((a, b) => a.order - b.order)
         : orderStops(tn === 1 ? dn : cn, items, cn, travel, o);
-      if (list.length > (d.seats || 0)) {
-        warnings.push({ code: "over_seats", driverId, text: `${d.name} has ${d.seats || 0} seat(s) but ${list.length} riders on trip ${tn}.` });
+      const used = items.reduce((n, i) => n + i.seats, 0);
+      if (used > (d.seats || 0)) {
+        warnings.push({ code: "over_seats", driverId, text: `${d.name} has ${d.seats || 0} seat(s) but trip ${tn} needs ${used} (riders plus the people coming with them).` });
       }
       return { tn, start: tn === 1 ? dn : cn, stops: ordered };
     });
@@ -190,6 +195,7 @@ export function evaluate({ church, drivers, riders, assignments, travel, date, o
           order: k,
           pickupMin,
           readyByMin: readyByFor(pickupMin, o),
+          seats: st.seats,
         };
       });
       if (i === 0 && s.pickups[0] < earliest) {
@@ -208,8 +214,15 @@ export function evaluate({ church, drivers, riders, assignments, travel, date, o
         arriveMin: s.arriveMin,
         routeMin: Math.round(s.arriveMin - s.departMin),
       });
-      for (const st of stops) out.push({ riderId: st.riderId, driverId, trip: t.tn, order: st.order, pickupMin: st.pickupMin, readyByMin: st.readyByMin, arriveMin: s.arriveMin });
+      for (const st of stops) out.push({ riderId: st.riderId, driverId, trip: t.tn, order: st.order, seats: st.seats, pickupMin: st.pickupMin, readyByMin: st.readyByMin, arriveMin: s.arriveMin });
     });
+  }
+  // A group split across cars when they asked to stay together is flagged, not blocked.
+  const carsPerRider = new Map();
+  for (const a of out) carsPerRider.set(a.riderId, (carsPerRider.get(a.riderId) || 0) + 1);
+  for (const [rid, n] of carsPerRider) {
+    const r = rById.get(rid);
+    if (n > 1 && !r.canSplit) warnings.push({ code: "split_not_ok", riderId: rid, text: `${r.name}'s group is split across ${n} cars, but they didn't say that's OK. Check with them before approving.` });
   }
   return { trips, assignments: out, warnings };
 }
@@ -237,16 +250,17 @@ export function plan({ church, drivers, riders, travel, date, options, keep = []
   const states = [...state.values()];
 
   // Assignments the leader already settled (used when re-planning after a cancellation).
-  const keptIds = new Set();
   const riderById = new Map(riders.map((r) => [r.id, r]));
+  const keptSeats = new Map();
   for (const k of keep) {
     const st = state.get(k.driverId);
     const r = riderById.get(k.riderId);
     if (!st || !r || !hasLoc(r)) continue;
     const trip = st.trips[(k.trip || 1) - 1];
-    if (!trip || trip.stops.length >= st.d.seats) continue;
-    trip.stops.push({ id: r.id, rider: r, node: riderNode(r, church), order: k.order ?? 0 });
-    keptIds.add(r.id);
+    const seats = k.seats ?? need(r);
+    if (!trip || load(trip) + seats > st.d.seats || trip.stops.some((x) => x.id === r.id)) continue;
+    trip.stops.push({ id: r.id, rider: r, node: riderNode(r, church), order: k.order ?? 0, seats });
+    keptSeats.set(r.id, (keptSeats.get(r.id) || 0) + seats);
   }
   for (const st of states) for (const t of st.trips) t.stops.sort((a, b) => a.order - b.order);
 
@@ -255,18 +269,26 @@ export function plan({ church, drivers, riders, travel, date, options, keep = []
   const feasible = (st) => {
     const present = st.trips.filter((t) => t.stops.length);
     if (!present.length) return true;
-    const s = scheduleTrips(present, cn, travel, o, target);
-    return s[0].pickups[0] >= earliest;
+    const sch = scheduleTrips(present, cn, travel, o, target);
+    return sch[0].pickups[0] >= earliest;
   };
 
-  const place = (rider, tripIdx) => {
+  /**
+   * Try to seat `want` seats of one rider on trip tripIdx. whole = all `want` in one car;
+   * otherwise a car takes as many as it has room for. Returns the seats placed (0 = none).
+   */
+  const tryPlace = (rider, tripIdx, want, whole) => {
     const node = riderNode(rider, church);
     const cands = [];
     for (const st of states) {
       if (pairIssue(st.d, rider, date)) continue;
-      if (tripIdx === 1 && (!st.d.secondTrip || st.trips[0].stops.length < st.d.seats)) continue;
       const trip = st.trips[tripIdx];
-      if (trip.stops.length >= st.d.seats) continue;
+      if (trip.stops.some((x) => x.id === rider.id)) continue;
+      const free = st.d.seats - load(trip);
+      const free0 = st.d.seats - load(st.trips[0]);
+      if (tripIdx === 1 && (!st.d.secondTrip || !st.trips[0].stops.length || (whole ? free0 >= want : free0 > 0))) continue;
+      const chunk = whole ? want : Math.min(want, free);
+      if (chunk < 1 || chunk > free) continue;
       const base = tripMinutes(trip, cn, travel, o);
       let pos = 0;
       let cost = Infinity;
@@ -278,27 +300,30 @@ export function plan({ church, drivers, riders, travel, date, options, keep = []
         }
       }
       if (cost > o.maxDetourMin || base + cost > o.maxRouteMin) continue;
-      cands.push({ st, trip, pos, cost });
+      cands.push({ st, trip, pos, cost, chunk });
     }
     cands.sort(
       (a, b) =>
+        (whole ? 0 : b.chunk - a.chunk) ||
         a.cost - b.cost ||
         a.trip.stops.length - b.trip.stops.length ||
         String(a.st.d.id).localeCompare(String(b.st.d.id))
     );
     for (const c of cands) {
-      c.trip.stops.splice(c.pos, 0, { id: rider.id, rider, node });
-      if (feasible(c.st)) return true;
+      c.trip.stops.splice(c.pos, 0, { id: rider.id, rider, node, seats: c.chunk });
+      if (feasible(c.st)) return c.chunk;
       c.trip.stops.splice(c.pos, 1);
     }
-    return false;
+    return 0;
   };
 
   const waitlist = [];
   const located = [];
-  for (const r of riders) {
-    if (keptIds.has(r.id)) continue;
-    if (!hasLoc(r)) waitlist.push({ riderId: r.id, reason: "We couldn't locate this address. Fix the address, then run the plan again." });
+  for (const r0 of riders) {
+    const remaining = need(r0) - (keptSeats.get(r0.id) || 0);
+    if (remaining <= 0) continue;
+    const r = keptSeats.has(r0.id) ? { ...r0, extraPeople: remaining - 1 } : r0;
+    if (!hasLoc(r)) waitlist.push({ riderId: r.id, seats: remaining, reason: "We couldn't locate this address. Fix the address, then run the plan again." });
     else located.push(r);
   }
   const constraint = (r) => (r.minor ? 1 : 0);
@@ -311,19 +336,21 @@ export function plan({ church, drivers, riders, travel, date, options, keep = []
   );
 
   let left = [];
-  for (const r of located) if (!place(r, 0)) left.push(r);
+  for (const r of located) if (!tryPlace(r, 0, need(r), true)) left.push(r);
   const still = [];
-  for (const r of left) if (!place(r, 1)) still.push(r);
+  for (const r of left) if (!tryPlace(r, 1, need(r), true)) still.push(r);
 
+  const maxSeats = states.length ? Math.max(...states.map((s) => s.d.seats)) : 0;
   const diagnose = (r) => {
     if (!states.length) return "No cleared, available drivers this Sunday.";
     const node = riderNode(r, church);
     const verdicts = states.map((st) => {
       if (pairIssue(st.d, r, date)) return "pair";
+      if (need(r) > st.d.seats) return "toobig";
       for (const idx of [0, 1]) {
         const trip = st.trips[idx];
-        if (idx === 1 && (!st.d.secondTrip || st.trips[0].stops.length < st.d.seats)) continue;
-        if (trip.stops.length >= st.d.seats) continue;
+        if (idx === 1 && (!st.d.secondTrip || !st.trips[0].stops.length || st.d.seats - load(st.trips[0]) >= need(r))) continue;
+        if (load(trip) + need(r) > st.d.seats) continue;
         const base = tripMinutes(trip, cn, travel, o);
         let cost = Infinity;
         for (let p = 0; p <= trip.stops.length; p++) cost = Math.min(cost, insertionDelta(trip, p, node, cn, travel, o));
@@ -332,16 +359,40 @@ export function plan({ church, drivers, riders, travel, date, options, keep = []
       return "full";
     });
     if (verdicts.every((v) => v === "pair")) return "Under 18 and no cleared driver is available.";
-    const rest = verdicts.filter((v) => v !== "pair");
+    const all = verdicts.filter((v) => v !== "pair");
+    if (all.every((v) => v === "toobig")) {
+      return `Needs ${need(r)} seats together (${need(r) - 1} coming with them); the biggest car offers ${maxSeats}. ${r.canSplit ? "They said splitting is OK, but there aren't enough seats in total." : "Ask whether it's OK to split them across cars, or arrange a bigger vehicle."}`;
+    }
+    const rest = all.filter((v) => v !== "toobig");
     if (rest.includes("far")) return "Too far out of the way for the drivers who still have seats.";
     if (rest.includes("early")) return `Would need a pickup before ${o.earliestPickup}.`;
-    return `All seats are taken (${riders.length} riders asking, ${totalSeats} seats offered).`;
+    if (need(r) > 1 && !r.canSplit) return `No single car has ${need(r)} free seats together. Ask whether it's OK to split them across cars.`;
+    return `All seats are taken (${riders.reduce((n, x) => n + need(x), 0)} people asking, ${totalSeats} seats offered).`;
   };
-  for (const r of still) waitlist.push({ riderId: r.id, reason: diagnose(r) });
+
+  for (const r of still) {
+    const want = need(r);
+    if (r.canSplit && want > 1) {
+      let rem = want;
+      for (;;) {
+        let got = tryPlace(r, 0, rem, false);
+        if (!got) got = tryPlace(r, 1, rem, false);
+        if (!got) break;
+        rem -= got;
+        if (rem <= 0) break;
+      }
+      if (rem > 0) {
+        const reason = rem === want ? diagnose(r) : `Seated ${want - rem} of ${want}; ${rem} still need a seat. All remaining seats are taken.`;
+        waitlist.push({ riderId: r.id, seats: rem, reason });
+      }
+    } else {
+      waitlist.push({ riderId: r.id, seats: want, reason: diagnose(r) });
+    }
+  }
 
   const assignments = [];
   for (const st of states) {
-    st.trips.forEach((t, ti) => t.stops.forEach((s, k) => assignments.push({ riderId: s.id, driverId: st.d.id, trip: ti + 1, order: k })));
+    st.trips.forEach((t, ti) => t.stops.forEach((s, k) => assignments.push({ riderId: s.id, driverId: st.d.id, trip: ti + 1, order: k, seats: stopSeats(s) })));
   }
   const ev = evaluate({ church, drivers, riders, assignments, travel, date, options });
 
@@ -351,7 +402,8 @@ export function plan({ church, drivers, riders, travel, date, options, keep = []
     excludedDrivers,
     stats: {
       riders: riders.length,
-      seated: assignments.length,
+      seated: new Set(assignments.map((a) => a.riderId)).size,
+      seatsUsed: assignments.reduce((n, a) => n + a.seats, 0),
       waitlisted: waitlist.length,
       seatsOffered: totalSeats,
       driversUsed: new Set(assignments.map((a) => a.driverId)).size,

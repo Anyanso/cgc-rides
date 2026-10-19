@@ -41,26 +41,29 @@ export function createDemoStore({ now = () => new Date() } = {}) {
     // ---- rider
     async myRides() {
       const m = me();
-      return db.requests.filter((r) => r.riderId === m.id && r.sunday >= db.sundays[0]).sort((a, b) => a.sunday.localeCompare(b.sunday)).map((r) => {
+      const rows = [];
+      for (const r of db.requests.filter((x) => x.riderId === m.id && x.sunday >= db.sundays[0]).sort((a, b) => a.sunday.localeCompare(b.sunday))) {
         const plan = db.plans[r.sunday];
-        const a = plan?.status === "approved" ? plan.assignments.find((x) => x.riderId === m.id) : null;
-        const w = plan?.status === "approved" ? plan.waitlist.find((x) => x.riderId === m.id) : null;
-        const d = a && r.status !== "cancelled" ? byId(a.driverId) : null;
-        return {
-          sunday: r.sunday, rideHome: r.rideHome, note: r.note,
-          status: r.status === "cancelled" ? "cancelled" : a ? "seated" : w ? "waitlisted" : "requested",
-          driverName: d?.name ?? null, driverPhone: d?.phone ?? null, vehicle: d?.vehicle ?? null,
-          trip: d ? a.trip : null, pickupMin: d ? a.pickupMin : null, readyByMin: d ? a.readyByMin : null, arriveMin: d ? a.arriveMin : null,
-        };
-      });
+        const approved = plan?.status === "approved" && r.status !== "cancelled";
+        const mine = approved ? plan.assignments.filter((x) => x.riderId === m.id).sort((a, b) => a.trip - b.trip) : [];
+        const w = approved ? plan.waitlist.find((x) => x.riderId === m.id) : null;
+        const base = { sunday: r.sunday, rideHome: r.rideHome, note: r.note, extraPeople: r.extraPeople || 0, canSplit: !!r.canSplit, waitlistedSeats: w ? w.seats ?? 1 : null };
+        if (r.status === "cancelled") rows.push({ ...base, status: "cancelled" });
+        else if (!mine.length) rows.push({ ...base, status: w ? "waitlisted" : "requested" });
+        else for (const a of mine) {
+          const d = byId(a.driverId);
+          rows.push({ ...base, status: "seated", driverName: d.name, driverPhone: d.phone, vehicle: d.vehicle, seats: a.seats ?? 1, trip: a.trip, pickupMin: a.pickupMin, readyByMin: a.readyByMin, arriveMin: a.arriveMin });
+        }
+      }
+      return rows;
     },
-    async requestRide(sunday, { rideHome = false, note = null } = {}) {
+    async requestRide(sunday, { rideHome = false, note = null, extraPeople = 0, canSplit = false } = {}) {
       const m = me();
       need(db.sundays.includes(sunday), "That Sunday is not open for requests.");
       need(!isClosed(sunday, now()), `Requests for this Sunday closed on Saturday at noon. Please contact the transport leader.`);
       const ex = db.requests.find((r) => r.riderId === m.id && r.sunday === sunday);
-      if (ex) Object.assign(ex, { status: "requested", rideHome, note });
-      else db.requests.push({ id: `q-${m.id}-${sunday}`, riderId: m.id, sunday, rideHome, note, status: "requested" });
+      if (ex) Object.assign(ex, { status: "requested", rideHome, note, extraPeople, canSplit });
+      else db.requests.push({ id: `q-${m.id}-${sunday}`, riderId: m.id, sunday, rideHome, note, extraPeople, canSplit, status: "requested" });
     },
     async cancelRide(sunday) {
       const m = me();
@@ -105,7 +108,7 @@ export function createDemoStore({ now = () => new Date() } = {}) {
         return { trip: a.trip, order: a.order, pickupMin: a.pickupMin, readyByMin: a.readyByMin, arriveMin: a.arriveMin,
           riderName: r.name, riderPhone: r.phone, address: r.address, neighbourhood: r.neighbourhood, lat: r.lat, lng: r.lng,
           minor: r.minor,
-          riderNotes: r.notes, requestNote: q?.note ?? null, rideHome: !!q?.rideHome, cancelled: q?.status === "cancelled" };
+          riderNotes: r.notes, requestNote: q?.note ?? null, extraPeople: q?.extraPeople || 0, seats: a.seats ?? 1, partyTotal: 1 + (q?.extraPeople || 0), rideHome: !!q?.rideHome, cancelled: q?.status === "cancelled" };
       }).filter((x) => !x.cancelled);
     },
     async cantMakeIt(sunday, note = null) {
@@ -138,11 +141,17 @@ export function createDemoStore({ now = () => new Date() } = {}) {
       }
       return p.id;
     },
-    async addRequest(riderId, sunday, { rideHome = false, note = null } = {}) {
+    async addRequest(riderId, sunday, { rideHome = false, note = null, extraPeople = 0, canSplit = false } = {}) {
       need(isLeader(), "Only the transport leader can do this.");
       const ex = db.requests.find((r) => r.riderId === riderId && r.sunday === sunday);
-      if (ex) Object.assign(ex, { status: "requested", rideHome, note });
-      else db.requests.push({ id: `q-${riderId}-${sunday}`, riderId, sunday, rideHome, note, status: "requested" });
+      if (ex) Object.assign(ex, { status: "requested", rideHome, note, extraPeople, canSplit });
+      else db.requests.push({ id: `q-${riderId}-${sunday}`, riderId, sunday, rideHome, note, extraPeople, canSplit, status: "requested" });
+    },
+    async updateRequest(riderId, sunday, patch) {
+      need(isLeader(), "Only the transport leader can do this.");
+      const r = db.requests.find((x) => x.riderId === riderId && x.sunday === sunday);
+      need(r, "No such request.");
+      Object.assign(r, patch);
     },
     async removeRequest(riderId, sunday) {
       const r = db.requests.find((x) => x.riderId === riderId && x.sunday === sunday);

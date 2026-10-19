@@ -137,7 +137,7 @@ function planSummary() { return { travelSource: S.planView.travelSource || null,
 
 async function persistPlan(status) {
   const pv = S.planView;
-  await store.savePlan(S.sunday, status, planSummary(), pv.assignments.map((a) => ({ riderId: a.riderId, driverId: a.driverId, trip: a.trip, order: a.order ?? 0, pickupMin: a.pickupMin ?? null, readyByMin: a.readyByMin ?? null, arriveMin: a.arriveMin ?? null })), pv.waitlist);
+  await store.savePlan(S.sunday, status, planSummary(), pv.assignments.map((a) => ({ riderId: a.riderId, driverId: a.driverId, trip: a.trip, order: a.order ?? 0, seats: a.seats ?? 1, pickupMin: a.pickupMin ?? null, readyByMin: a.readyByMin ?? null, arriveMin: a.arriveMin ?? null })), pv.waitlist);
   S.planView = null;
   await reload();
 }
@@ -204,6 +204,17 @@ const actions = {
     S.tab = "plan";
     say(`Riders moved. ${res.waitlist.length ? res.waitlist.length + " could not be placed (see waiting list). " : ""}Review, then save.`);
   },
+  async "split-ok"(d) {
+    needChurch();
+    const rid = d.rider;
+    await store.updateRequest(rid, S.sunday, { canSplit: true });
+    S.data = { ...S.data, requests: S.data.requests.map((q) => (q.riderId === rid && q.sunday === S.sunday ? { ...q, canSplit: true } : q)) };
+    const current = S.planView;
+    const keep = current.assignments.filter((a) => a.riderId !== rid);
+    const res = await draftPlan({ data: S.data, sunday: S.sunday, church: S.church, config: CONFIG, keep });
+    adoptResult(res, current.status);
+    say("Re-placed that group across cars. Everyone else stayed where they were. Review, then save.");
+  },
   async resolve(d) { await store.resolveAlert(d.id); await reload(); },
   edit(d) { S.editing = d.id; },
   "edit-cancel"() { S.editing = null; },
@@ -212,7 +223,7 @@ const actions = {
 async function onMove(el) {
   if (!el.value) return;
   needChurch();
-  const moved = applyMove({ assignments: S.planView.assignments, waitlist: S.planView.waitlist }, el.dataset.rider, el.value);
+  const moved = applyMove({ assignments: S.planView.assignments, waitlist: S.planView.waitlist }, el.dataset.rider, el.value, el.dataset.from);
   const res = await recompute({ data: S.data, sunday: S.sunday, church: S.church, config: CONFIG, ...moved });
   S.planView = { ...S.planView, assignments: res.assignments, waitlist: res.waitlist, trips: res.trips, warnings: res.warnings, dirty: true, travelNote: res.travelNote, travelSource: res.travelSource };
 }
@@ -220,7 +231,7 @@ async function onMove(el) {
 async function onSubmit(form) {
   const kind = form.dataset.form;
   if (kind === "signin") { const email = new FormData(form).get("email").toString().trim(); await store.signIn(email); S.signInSent = email; return; }
-  if (kind === "request") { const f = new FormData(form); await store.requestRide(form.dataset.sunday, { rideHome: f.get("rideHome") === "on", note: (f.get("note") || "").toString().trim() || null }); await reload(); say("Request sent. We'll confirm your driver after requests close."); return; }
+  if (kind === "request") { const f = new FormData(form); await store.requestRide(form.dataset.sunday, { rideHome: f.get("rideHome") === "on", note: (f.get("note") || "").toString().trim() || null, extraPeople: Math.max(0, Math.min(10, Number(f.get("extraPeople")) || 0)), canSplit: f.get("canSplit") === "on" }); await reload(); say("Request sent. We'll confirm your driver after requests close."); return; }
   if (kind === "broadcast") { const f = new FormData(form); S.broadcast = lastMinuteBroadcast(S.sunday, f.get("who").toString().trim(), f.get("where").toString().trim()); return; }
   if (kind === "profile") {
     const leaderEditing = S.me?.role === "leader" && S.editing;
@@ -231,7 +242,7 @@ async function onSubmit(form) {
       const id = await store.saveProfile({ ...(existing.id ? { id: existing.id } : {}), ...patch });
       const f = new FormData(form);
       if (S.editing === "new") {
-        if (f.get("needsRide") === "on") await store.addRequest(id, S.sunday, {});
+        if (f.get("needsRide") === "on") await store.addRequest(id, S.sunday, { extraPeople: Math.max(0, Math.min(10, Number(f.get("extraPeople")) || 0)), canSplit: f.get("canSplit") === "on" });
         if (f.get("consentByPhone") === "on") await store.giveConsent(CONSENT_WORDING + " (agreed by phone, recorded by the leader)", id);
       }
       S.editing = null; await reload(); say("Saved."); return;

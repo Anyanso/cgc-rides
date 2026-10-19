@@ -95,7 +95,7 @@ test("the plan cannot be saved with an uncleared driver or too many riders", asy
   const a = (r, d, extra = {}) => ({ riderId: P[r], driverId: P[d], trip: 1, order: 0, pickupMin: 620, readyByMin: 615, arriveMin: 690, ...extra });
   await assert.rejects(() => as("leader", () => db.query("select save_plan($1,'draft','{}',$2,'[]')", [SUN, JSON.stringify([a("r1", "d2")])])), /cleared drivers/);
   await db.exec("update profiles set seats=1 where id='" + P.d1 + "'");
-  await assert.rejects(() => as("leader", () => db.query("select save_plan($1,'draft','{}',$2,'[]')", [SUN, JSON.stringify([a("r1", "d1"), a("r2", "d1", { order: 1 })])])), /more riders than seats/);
+  await assert.rejects(() => as("leader", () => db.query("select save_plan($1,'draft','{}',$2,'[]')", [SUN, JSON.stringify([a("r1", "d1"), a("r2", "d1", { order: 1 })])])), /more people than seats/);
   await db.exec("update profiles set seats=3 where id='" + P.d1 + "'");
   await assert.rejects(() => as("r1", () => db.query("select save_plan($1,'draft','{}','[]','[]')", [SUN])), /Only the transport leader/);
   // nothing was left half-saved by the failed attempts
@@ -187,4 +187,26 @@ test("the leader can add a rider who phoned in", async () => {
     await db.query("insert into ride_requests (rider_id,sunday) values ($1,$2)", [id, SUN]);
   });
   assert.equal((await q("select count(*)::int c from profiles where user_id is null"))[0].c, 1);
+});
+
+test("seats are counted by people: a split group shows one row per car; a car can't be over-filled by people", async () => {
+  await db.exec("update profiles set seats=4 where id='" + P.d1 + "'");
+  await db.exec("update profiles set driver_status='cleared' where id='" + P.d2 + "'");
+  await db.exec("update profiles set seats=3 where id='" + P.d2 + "'");
+  await db.query("update ride_requests set status='requested', extra_people=5, can_split=true where rider_id=$1 and sunday=$2", [P.r1, SUN]);
+  const asg = (d, seats, order = 0) => ({ riderId: P.r1, driverId: P.d1 === d ? P.d1 : P.d2, trip: 1, order, seats, pickupMin: 620, readyByMin: 615, arriveMin: 690 });
+  // 5 people in a 4-seat car: refused
+  await assert.rejects(() => as("leader", () => db.query("select save_plan($1,'approved','{}',$2,'[]')", [SUN, JSON.stringify([asg(P.d1, 5)])])), /more people than seats/);
+  // 4 + 2 across two cars, no one waiting: accepted
+  await as("leader", () => db.query("select save_plan($1,'approved','{}',$2,'[]')", [SUN, JSON.stringify([asg(P.d1, 4), asg(P.d2, 2)])]));
+  const rows = await as("r1", () => q("select driver_name, seats from my_rides() where sunday=$1 order by seats desc", [SUN]));
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows.map((r) => r.seats), [4, 2]);
+  // Each driver sees only their share, and the whole party size.
+  const route = await as("d2", () => q("select seats, party_total, extra_people from my_route($1)", [SUN]));
+  assert.deepEqual({ ...route[0] }, { seats: 2, party_total: 6, extra_people: 5 });
+  // A leftover waitlist share is visible to the rider as "still waiting for N".
+  await as("leader", () => db.query("select save_plan($1,'approved','{}',$2,$3)", [SUN, JSON.stringify([asg(P.d1, 4)]), JSON.stringify([{ riderId: P.r1, reason: "No seats", seats: 2 }])]));
+  const left = await as("r1", () => q("select waitlisted_seats from my_rides() where sunday=$1", [SUN]));
+  assert.equal(left[0].waitlisted_seats, 2);
 });

@@ -11,11 +11,12 @@ const service = () => CONFIG.service.time;
 const svcLabel = () => fmtMin(toMin(service()));
 
 export function weeklyCheckin(sunday, appUrl = "") {
-  return `Good day from ${church()}. Do you need a ride this Sunday (${fmtDate(sunday)})? Please tell us in the app by Saturday 12:00 noon${appUrl ? `: ${appUrl}` : ""}. If we don't hear from you, we won't arrange a ride.`;
+  return `Good day from ${church()}. Do you need a ride this Sunday (${fmtDate(sunday)})? Please tell us in the app by Saturday 12:00 noon, and how many people are coming with you${appUrl ? `: ${appUrl}` : ""}. If we don't hear from you, we won't arrange a ride.`;
 }
 
-export function riderDetails(sunday, rider, driver, stop) {
-  return `Hi ${first(rider.name)}, your ride for ${fmtDate(sunday)} is arranged. ${first(driver.name)}${driver.vehicle ? ` (${driver.vehicle})` : ""} will pick you up around ${fmtMin(stop.pickupMin)}. Please be ready by ${fmtMin(stop.readyByMin)} to avoid delays.${driver.phone ? ` Driver's number: ${driver.phone}.` : ""} Service is at ${svcLabel()}.`;
+export function riderDetails(sunday, rider, driver, stop, partyTotal = 1) {
+  const who = partyTotal > 1 && (stop.seats ?? 1) < partyTotal ? `${stop.seats} of your group of ${partyTotal}` : partyTotal > 1 ? `your group of ${partyTotal}` : "you";
+  return `Hi ${first(rider.name)}, your ride for ${fmtDate(sunday)} is arranged. ${first(driver.name)}${driver.vehicle ? ` (${driver.vehicle})` : ""} will pick up ${who} around ${fmtMin(stop.pickupMin)}. Please be ready by ${fmtMin(stop.readyByMin)} to avoid delays.${driver.phone ? ` Driver's number: ${driver.phone}.` : ""} Service is at ${svcLabel()}.`;
 }
 
 export function waitlisted(sunday, rider) {
