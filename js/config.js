@@ -36,4 +36,7 @@ export const CONFIG = {
   geocoding: { enabled: true, nominatimUrl: "https://nominatim.openstreetmap.org" },
 };
 
-export const IS_DEMO = !(CONFIG.supabase.url && CONFIG.supabase.anonKey);
+// Adding ?demo to the address opens the sample-data demo (fictional people, nothing saved),
+// so the leader can look at every role without touching the real database.
+const asksForDemo = typeof location !== "undefined" && /[?&]demo(=|&|$)/.test(location.search || "");
+export const IS_DEMO = asksForDemo || !(CONFIG.supabase.url && CONFIG.supabase.anonKey);

@@ -84,3 +84,8 @@ Automatic texting (Twilio), rides home with a different driver, a church van as 
 ## Layout
 
 `index.html` · `css/styles.css` · `js/` (`matching.js` engine, `routing.js`, `geo.js`, `planner.js`, `texts.js`, `views.js`, `app.js`, `store-demo.js`, `store-live.js`, `config.js`) · `supabase/schema.sql` · `tests/`
+
+
+## Looking at every role without touching real data
+
+Add `?demo` to the site address (for example `https://anyanso.github.io/cgc-rides/?demo`) to open the sample-data demo. It uses fictional people, saves nothing, and lets you view the app as the leader, a driver or a rider.
