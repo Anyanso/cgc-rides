@@ -134,6 +134,27 @@ export function createDemoStore({ now = () => new Date() } = {}) {
       validatePlan({ profilesById: new Map(db.profiles.map((p) => [p.id, p])), sunday, assignments });
       db.plans[sunday] = { sunday, status, summary: summary || {}, assignments: fresh(assignments), waitlist: fresh(waitlist || []), approvedAt: status === "approved" ? now().toISOString() : null };
     },
+    async removePerson(id) {
+      need(isLeader(), "Only the transport leader can do this.");
+      const victim = byId(id);
+      need(victim, "That person was not found.");
+      need(victim.role !== "leader", "Leaders cannot be removed here.");
+      need(id !== viewer, "You cannot remove yourself.");
+      let plansReopened = 0, ridesRemoved = 0;
+      for (const plan of Object.values(db.plans)) {
+        const mine = plan.assignments.filter((a) => a.riderId === id || a.driverId === id);
+        if (!mine.length) continue;
+        plansReopened++; ridesRemoved += mine.length;
+        plan.assignments = plan.assignments.filter((a) => !mine.includes(a));
+        plan.status = "draft"; plan.approvedAt = null;
+      }
+      for (const plan of Object.values(db.plans)) plan.waitlist = plan.waitlist.filter((w) => w.riderId !== id);
+      db.profiles = db.profiles.filter((p) => p.id !== id);
+      db.requests = db.requests.filter((r) => r.riderId !== id);
+      db.weeks = db.weeks.filter((w) => w.driverId !== id);
+      db.alerts = db.alerts.filter((a) => a.driverId !== id && a.riderId !== id);
+      return { removed: victim.name, plansReopened, ridesRemoved };
+    },
     async saveProfile(p) {
       need(isLeader(), "Only the transport leader can do this.");
       if (p.id && byId(p.id)) Object.assign(byId(p.id), p);

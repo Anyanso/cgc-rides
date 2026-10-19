@@ -227,6 +227,14 @@ const actions = {
   async resolve(d) { await store.resolveAlert(d.id); await reload(); },
   edit(d) { S.editing = d.id; },
   "edit-cancel"() { S.editing = null; },
+  async "remove-person"(d) {
+    const p = S.data.profiles.find((x) => x.id === d.id);
+    if (!p) return;
+    if (!confirm(`Remove ${p.name}? This deletes them with their requests, availability and rides, and cannot be undone. Any plan they are in goes back to a draft.`)) return;
+    const res = await store.removePerson(d.id);
+    S.editing = null; S.planView = null; await reload();
+    say(`${res?.removed || p.name} was removed.` + (res?.plansReopened ? ` ${res.plansReopened} plan(s) went back to draft: please check and approve again.` : ""));
+  },
 };
 
 async function onMove(el) {

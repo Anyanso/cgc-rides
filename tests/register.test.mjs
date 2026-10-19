@@ -40,3 +40,18 @@ test("driver text gives address, phone and how many people are in this car", () 
   const solo = driverRoute("2026-10-25", { name: "Jo" }, [{ trip: 1, stops: [{ riderId: "m", pickupMin: 675, seats: 1 }] }], riders);
   assert.ok(!/people in this group/.test(solo));
 });
+
+import { createDemoStore } from "../js/store-demo.js";
+
+test("demo: the leader can remove a test person and the plan goes back to draft", async () => {
+  const s = createDemoStore();
+  s.viewAs("leader");
+  const data = await s.leaderData();
+  const victim = data.profiles.find((p) => p.role === "rider");
+  await s.removePerson(victim.id);
+  const after = await s.leaderData();
+  assert.ok(!after.profiles.some((p) => p.id === victim.id));
+  await assert.rejects(() => s.removePerson("leader"), /Leaders cannot be removed|cannot remove yourself/);
+  s.viewAs(data.profiles.find((p) => p.role === "driver").id);
+  await assert.rejects(() => s.removePerson(victim.id), /Only the transport leader/);
+});

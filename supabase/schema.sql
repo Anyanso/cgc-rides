@@ -439,6 +439,35 @@ begin
   return pid;
 end $$;
 
+-- ---------------------------------------------------------------- removing a person
+-- The leader can remove a rider or driver (for example a test name). Their requests, weekly
+-- availability, ride assignments, waitlist entries, alerts and consent records go with them.
+-- If they were in a plan, that plan goes back to draft so nobody is shown a half-empty plan.
+-- Leaders cannot be removed here (use the SQL Editor), and nobody can remove themselves.
+-- Their sign-in (email) is kept: if they sign in again they simply register again.
+
+create or replace function remove_person(p_id uuid)
+returns jsonb
+language plpgsql security definer set search_path = public, pg_temp as $$
+declare victim profiles; n_plans int; n_rides int;
+begin
+  if not is_leader() then raise exception 'Only the transport leader can remove people.'; end if;
+  select * into victim from profiles where id = p_id;
+  if not found then raise exception 'That person was not found.'; end if;
+  if victim.role = 'leader' then raise exception 'Leaders cannot be removed here.'; end if;
+  if victim.user_id is not null and victim.user_id = auth.uid() then raise exception 'You cannot remove yourself.'; end if;
+
+  select count(distinct plan_id), count(*) into n_plans, n_rides
+    from assignments where rider_id = p_id or driver_id = p_id;
+
+  update plans set status = 'draft', approved_at = null
+   where id in (select plan_id from assignments where rider_id = p_id or driver_id = p_id);
+  delete from assignments where rider_id = p_id or driver_id = p_id;
+  delete from profiles where id = p_id;
+
+  return jsonb_build_object('removed', victim.full_name, 'plansReopened', n_plans, 'ridesRemoved', n_rides);
+end $$;
+
 -- ---------------------------------------------------------------- permissions
 
 revoke all on all tables in schema public from anon;

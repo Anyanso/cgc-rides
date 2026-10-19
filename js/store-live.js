@@ -164,6 +164,8 @@ export async function createLiveStore(config, { createClient } = {}) {
       fail(res);
       return res.data.id;
     },
+    /** Removes a rider or driver (and their requests and rides). Their plan goes back to draft. */
+    async removePerson(id) { return rpc("remove_person", { p_id: id }); },
     async addRequest(riderId, sunday, { rideHome = false, note = null, extraPeople = 0, canSplit = false } = {}) {
       fail(await from("ride_requests").upsert({ rider_id: riderId, sunday, ride_home: rideHome, note, extra_people: extraPeople, can_split: canSplit, status: "requested" }, { onConflict: "rider_id,sunday" }));
     },

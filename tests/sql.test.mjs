@@ -221,3 +221,31 @@ test("a leader who also drives can be given riders, sees their route, and can sa
   const n = await as("leader", () => q("select driver_cant_make_it($1,'Away') as n", [SUN]));
   assert.equal(n[0].n, 1);
 });
+
+test("the leader can remove a test person; their rides go and the plan goes back to draft", async () => {
+  const asg = (riderId, driverId, order = 0) => ({ riderId, driverId, trip: 1, order, seats: 1, pickupMin: 620, readyByMin: 615, arriveMin: 690 });
+  // a rider is removed
+  await db.query("update ride_requests set status='requested', extra_people=0 where rider_id=$1 and sunday=$2", [P.r2, SUN]);
+  await as("leader", () => db.query("select save_plan($1,'approved','{}',$2,'[]')", [SUN, JSON.stringify([asg(P.r2, P.d1)])]));
+  const out = await as("leader", () => q("select remove_person($1) as r", [P.r2]));
+  assert.equal(out[0].r.plansReopened, 1);
+  assert.equal((await q("select count(*)::int c from profiles where id=$1", [P.r2]))[0].c, 0);
+  assert.equal((await q("select count(*)::int c from ride_requests where rider_id=$1", [P.r2]))[0].c, 0);
+  assert.equal((await q("select status from plans where sunday=$1", [SUN]))[0].status, "draft");
+  assert.equal((await q("select count(*)::int c from assignments a join plans p on p.id=a.plan_id where p.sunday=$1", [SUN]))[0].c, 0);
+  // a driver who has riders in a plan is removed
+  await as("leader", () => db.query("select save_plan($1,'approved','{}',$2,'[]')", [SUN, JSON.stringify([asg(P.r1, P.d1)])]));
+  await as("leader", () => db.query("select remove_person($1)", [P.d1]));
+  assert.equal((await q("select count(*)::int c from profiles where id=$1", [P.d1]))[0].c, 0);
+  assert.equal((await q("select status from plans where sunday=$1", [SUN]))[0].status, "draft");
+  // the rider who was in that car is still there
+  assert.equal((await q("select count(*)::int c from profiles where id=$1", [P.r1]))[0].c, 1);
+  // the sign-in itself is kept so they can register again
+  assert.equal((await q("select count(*)::int c from auth.users where id=$1", [U.d1]))[0].c, 1);
+});
+
+test("only the leader can remove people, and leaders cannot be removed", async () => {
+  await assert.rejects(() => as("r1", () => db.query("select remove_person($1)", [P.leader])), /Only the transport leader/);
+  await assert.rejects(() => as("leader", () => db.query("select remove_person($1)", [P.leader])), /Leaders cannot be removed/);
+  await assert.rejects(() => as("leader", () => db.query("select remove_person($1)", ["00000000-0000-0000-0000-000000000999"])), /not found/);
+});
