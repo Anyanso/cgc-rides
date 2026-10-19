@@ -20,7 +20,7 @@ const S = {
   screen: "landing", session: null, me: null, tab: null,
   sundays: [], sunday: null, rides: [], weeks: [], routes: {},
   data: null, planView: null, church: null, churchWarning: null,
-  editing: null, busy: false, toast: "", error: "", signInSent: "", broadcast: "",
+  editing: null, busy: false, toast: "", error: "", signInSent: "", regRole: null, broadcast: "",
   now: new Date(), todayISO: "", demoPeople: null, appUrl: "", demoChurchLabel: DEMO_CHURCH.label,
 };
 
@@ -158,9 +158,10 @@ const actions = {
   home() { S.screen = "landing"; },
   "demo-start"() { S.screen = "picker"; },
   "goto-signin"() { S.screen = "signin"; },
+  "reg-role"(d) { S.regRole = d.role === "driver" ? "driver" : "rider"; },
   "signin-reset"() { S.signInSent = ""; },
   async viewas(d) { store.viewAs(d.id); S.session = store.session(); S.tab = null; S.sunday = null; S.planView = null; S.editing = null; await reload(); say(`Viewing as ${S.me?.name}`); },
-  async signout() { await store.signOut(); S.session = null; S.me = null; S.screen = "landing"; S.tab = null; S.planView = null; },
+  async signout() { await store.signOut(); S.session = null; S.me = null; S.screen = "landing"; S.tab = null; S.planView = null; S.regRole = null; },
   tab(d) { S.tab = d.tab; S.editing = null; },
   async "pick-sunday"(d) {
     if (d.sunday === S.sunday) return;
@@ -256,7 +257,7 @@ async function onSubmit(form) {
     const patch = await withLocation(raw, S.me || {});
     if (!registering) delete patch.role;
     S.me = await store.saveMyProfile(patch);
-    if (registering) S.tab = null;
+    if (registering) { S.tab = null; S.regRole = null; }
     await reload(); say(registering ? "You're registered." : "Saved.");
   }
 }

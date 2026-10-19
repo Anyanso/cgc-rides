@@ -96,12 +96,8 @@ export function profileForm(S, p = {}, { leaderEditing = false, registering = fa
   const isDrv = p.role === "driver";
   const hoods = NEIGHBOURHOODS.map((n) => `<option ${p.neighbourhood === n.name ? "selected" : ""}>${esc(n.name)}</option>`).join("");
   const chk = (name, on, label) => `<label class="check"><input type="checkbox" name="${name}" ${on ? "checked" : ""}> <span>${label}</span></label>`;
-  const roleChoice = registering
-    ? `<fieldset class="field"><legend>I want to…</legend>
-        <label class="check"><input type="radio" name="role" value="rider" ${isDrv ? "" : "checked"}> <span>Get rides to church</span></label>
-        <label class="check"><input type="radio" name="role" value="driver" ${isDrv ? "checked" : ""}> <span>Give rides (I have a car)</span></label></fieldset>`
-    : `<input type="hidden" name="role" value="${esc(p.role || "rider")}">`;
-  const driverBits = (isDrv || registering || leaderSelf) ? `<fieldset class="field driverbits"><legend>If you drive</legend>
+  const roleChoice = `<input type="hidden" name="role" value="${esc(p.role || "rider")}">`;
+  const driverBits = (isDrv || leaderSelf) ? `<fieldset class="field driverbits"><legend>If you drive</legend>
       ${leaderSelf ? chk("alsoDrives", p.status === "cleared" && p.seats > 0, "<strong>I also drive</strong> (I'm cleared to drive myself)") : ""}
       <label class="field">Seats free for passengers (not counting you)<input name="seats" type="number" min="0" max="14" value="${esc(p.seats ?? 3)}"></label>
       <label class="field">Vehicle (so riders can spot you)<input name="vehicle" value="${esc(p.vehicle || "")}" placeholder="e.g. Grey SUV"></label>
@@ -122,7 +118,7 @@ export function profileForm(S, p = {}, { leaderEditing = false, registering = fa
     <label class="field">Phone<input name="phone" type="tel" value="${esc(p.phone || "")}" autocomplete="tel"></label>
     <label class="field">Home address (street and number)<input name="address" value="${esc(p.address || "")}" autocomplete="street-address"></label>
     <label class="field">Neighbourhood<select name="neighbourhood"><option value="">Choose…</option>${hoods}</select></label>
-    ${chk("minor", p.minor, "This rider is under 18")}
+    ${registering && isDrv ? "" : chk("minor", p.minor, "This rider is under 18")}
     <label class="field">Anything the driver should know (optional)<input name="notes" value="${esc(p.notes || "")}" placeholder="e.g. uses a walker"></label>
     ${driverBits}${leaderBits}
     <div class="row"><button class="btn primary" type="submit">Save</button>${leaderEditing || registering ? "" : ""}${leaderEditing ? btn("Cancel", "edit-cancel") : ""}</div>
@@ -130,9 +126,18 @@ export function profileForm(S, p = {}, { leaderEditing = false, registering = fa
 }
 
 export function registerView(S) {
-  return `<section class="card"><h2>Welcome. Tell us about you</h2>
-    <p class="muted">Signed in as ${esc(S.session?.email || "")}. Your address is only ever shown to the transport leader and the driver assigned to you.</p>
-    ${profileForm(S, { role: "rider" }, { registering: true })}</section>`;
+  const email = esc(S.session?.email || "");
+  if (!S.regRole) return `<section class="card"><h2>Welcome. How would you like to help or be helped?</h2>
+    <p class="muted">Signed in as ${email}. Pick one. You can ask the transport leader to change it later.</p>
+    <div class="stack">
+      <button class="card pick" type="button" data-act="reg-role" data-role="rider"><strong>I need a ride to church</strong><br><span class="muted small">We'll match you with a driver each Sunday.</span></button>
+      <button class="card pick" type="button" data-act="reg-role" data-role="driver"><strong>I can give rides</strong><br><span class="muted small">I have a car and some free seats.</span></button>
+    </div></section>`;
+  const driving = S.regRole === "driver";
+  return `<section class="card"><h2>${driving ? "Great. Tell us about you and your car" : "Welcome. Tell us about you"}</h2>
+    <p class="muted">Signed in as ${email}. Your address is only ever shown to the transport leader${driving ? "" : " and the driver assigned to you"}.</p>
+    ${profileForm(S, { role: S.regRole }, { registering: true })}
+    <p>${btn(driving ? "Actually, I need a ride" : "Actually, I can give rides", "reg-role", { role: driving ? "rider" : "driver" })} </p></section>`;
 }
 
 // ---------------------------------------------------------------- rider
