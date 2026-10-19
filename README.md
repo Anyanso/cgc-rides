@@ -12,7 +12,7 @@ Sunday rides to **Chosen Generation Church** (Saskatoon). Riders ask for a lift,
 |---|---|
 | **Rider** | Ask for any of the next 4 Sundays (optionally "ride home too"); opt in to a weekly check-in; see driver name, phone, car, pickup time and "be ready by" time once approved; "I can't make it" |
 | **Driver** | Set seats, every-week or week-by-week availability, second trip; see an ordered pickup list with addresses, notes and a Google Maps route; "I can't make it" |
-| **Leader** | See requests vs seats; draft the plan; move people by hand; approve; approve and clear drivers (you do the vetting); add riders who phoned in; reassign in one click when a driver cancels; copy ready-made texts |
+| **Leader** (who can also drive: My driving tab) | See requests vs seats; draft the plan; move people by hand; approve; approve and clear drivers (you do the vetting); add riders who phoned in; reassign in one click when a driver cancels; copy ready-made texts |
 
 **Matching.** Each rider goes to the car where they add the fewest minutes on the way to church (real road times from OpenStreetMap routing, straight-line estimate if that's unreachable). Priority riders go first. Seats are the real limit, so drivers can offer a second trip, and anyone left goes on a waiting list **with the reason written out**.
 
@@ -68,7 +68,7 @@ Things to watch: pickup times vs reality (adjust `stopMin` and `maxDetourMin`), 
 
 ## What is and isn't verified
 
-`npm install && npm test` runs 44 tests: the matching engine (rules, second trips, waitlist, 150 riders), the privacy and safety rules **in a real Postgres** (PGlite), the demo store, every screen rendered for every role, and request building/parsing for routing and address lookup.
+`npm install && npm test` runs 46 tests: the matching engine (rules, second trips, waitlist, 150 riders), the privacy and safety rules **in a real Postgres** (PGlite), the demo store, every screen rendered for every role, and request building/parsing for routing and address lookup.
 
 **Not tested from the build environment** (no outside network there): the real Supabase project and email sign-in, and the real OpenStreetMap routing and address services. Do the first live run yourself with the test plan above.
 

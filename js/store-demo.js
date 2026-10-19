@@ -33,6 +33,7 @@ export function createDemoStore({ now = () => new Date() } = {}) {
       const p = me();
       const allowed = ["name", "phone", "gender", "address", "neighbourhood", "lat", "lng", "geoSource", "minor",
         "weeklyCheckin", "notes", "seats", "drivesEveryWeek", "secondTrip", "vehicle", "role"];
+      if (p.role === "leader") allowed.push("status");
       for (const k of allowed) if (k in patch && !(k === "role" && !["rider", "driver"].includes(patch.role))) p[k] = patch[k];
       if (p.role === "driver" && p.status === "none") p.status = "pending";
       return fresh(p);
@@ -113,7 +114,7 @@ export function createDemoStore({ now = () => new Date() } = {}) {
     },
     async cantMakeIt(sunday, note = null) {
       const m = me();
-      need(m.role === "driver", "Only drivers can use this.");
+      need(m.role === "driver" || (m.role === "leader" && m.seats > 0), "Only drivers can use this.");
       await this.setAvailability(sunday, false, note);
       const n = (db.plans[sunday]?.assignments || []).filter((a) => a.driverId === m.id).length;
       db.alerts.push({ id: `a${db.alerts.length + 1}`, kind: "driver_cancel", sunday, driverId: m.id, riderId: null, resolved: false,

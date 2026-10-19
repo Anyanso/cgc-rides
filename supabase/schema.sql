@@ -341,7 +341,7 @@ returns int
 language plpgsql security definer set search_path = public, pg_temp as $$
 declare me profiles; n int;
 begin
-  select * into me from profiles where user_id = auth.uid() and role = 'driver';
+  select * into me from profiles where user_id = auth.uid() and (role = 'driver' or (role = 'leader' and seats > 0));
   if not found then raise exception 'Only drivers can use this.'; end if;
   insert into driver_weeks (driver_id, sunday, available, note) values (me.id, p_sunday, false, p_note)
   on conflict (driver_id, sunday) do update set available = false, note = excluded.note;

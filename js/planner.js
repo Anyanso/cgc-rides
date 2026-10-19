@@ -3,7 +3,7 @@
 
 import { plan, evaluate, pointsFor } from "./matching.js";
 import { buildTravel } from "./routing.js";
-import { asDriver } from "./models.js";
+import { asDriver, isDriver } from "./models.js";
 
 export function matchOptions(config) {
   return {
@@ -22,7 +22,7 @@ export function sundayPeople(data, sunday) {
     .filter((r) => r.sunday === sunday && r.status !== "cancelled")
     .map((r) => ({ ...byId.get(r.riderId), rideHome: r.rideHome, requestNote: r.note, extraPeople: r.extraPeople || 0, canSplit: !!r.canSplit }))
     .filter((r) => r.id);
-  const drivers = data.profiles.filter((p) => p.role === "driver").map((p) => asDriver(p, data.weeks, sunday));
+  const drivers = data.profiles.filter(isDriver).map((p) => asDriver(p, data.weeks, sunday));
   return { riders, drivers };
 }
 

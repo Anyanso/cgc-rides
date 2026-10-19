@@ -210,3 +210,14 @@ test("seats are counted by people: a split group shows one row per car; a car ca
   const left = await as("r1", () => q("select waitlisted_seats from my_rides() where sunday=$1", [SUN]));
   assert.equal(left[0].waitlisted_seats, 2);
 });
+
+test("a leader who also drives can be given riders, sees their route, and can say they can't make it", async () => {
+  await db.exec("update profiles set seats=3, driver_status='cleared' where id='" + P.leader + "'");
+  await db.query("update ride_requests set status='requested', extra_people=0 where rider_id=$1 and sunday=$2", [P.r1, SUN]);
+  const asg = { riderId: P.r1, driverId: P.leader, trip: 1, order: 0, seats: 1, pickupMin: 620, readyByMin: 615, arriveMin: 690 };
+  await as("leader", () => db.query("select save_plan($1,'approved','{}',$2,'[]')", [SUN, JSON.stringify([asg])]));
+  const route = await as("leader", () => q("select rider_name from my_route($1)", [SUN]));
+  assert.equal(route.length, 1);
+  const n = await as("leader", () => q("select driver_cant_make_it($1,'Away') as n", [SUN]));
+  assert.equal(n[0].n, 1);
+});

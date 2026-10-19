@@ -33,6 +33,9 @@ export function driverAvailable(driver, weeks, sunday) {
   return w ? !!w.available : !!driver.drivesEveryWeek;
 }
 
+/** A driver is a driver by role, or a leader who has set themselves up to drive too. */
+export const isDriver = (p) => p.role === "driver" || (p.role === "leader" && p.status === "cleared" && p.seats > 0);
+
 export const asDriver = (p, weeks, sunday) => ({ ...p, available: driverAvailable(p, weeks, sunday) });
 
 /** Same rules the database enforces on save_plan, so the demo behaves like the real thing. */

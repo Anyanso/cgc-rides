@@ -4,7 +4,7 @@
 
 import { NEIGHBOURHOODS } from "./geo.js";
 import { fmtDate, fmtMin, isClosed, toMin } from "./dates.js";
-import { driverAvailable, DRIVER_STATUS_TEXT, CONSENT_WORDING, daysLeft } from "./models.js";
+import { driverAvailable, DRIVER_STATUS_TEXT, CONSENT_WORDING, daysLeft, isDriver } from "./models.js";
 import { driverIssue } from "./matching.js";
 import { groupCars } from "./planner.js";
 import * as T from "./texts.js";
@@ -85,16 +85,17 @@ export function demoPickerView(S) {
 
 // ---------------------------------------------------------------- profile form (all roles)
 
-export function profileForm(S, p = {}, { leaderEditing = false, registering = false, addingForSunday = null } = {}) {
-  const isDriver = p.role === "driver";
+export function profileForm(S, p = {}, { leaderEditing = false, registering = false, addingForSunday = null, leaderSelf = false } = {}) {
+  const isDrv = p.role === "driver";
   const hoods = NEIGHBOURHOODS.map((n) => `<option ${p.neighbourhood === n.name ? "selected" : ""}>${esc(n.name)}</option>`).join("");
   const chk = (name, on, label) => `<label class="check"><input type="checkbox" name="${name}" ${on ? "checked" : ""}> <span>${label}</span></label>`;
   const roleChoice = registering
     ? `<fieldset class="field"><legend>I want to…</legend>
-        <label class="check"><input type="radio" name="role" value="rider" ${isDriver ? "" : "checked"}> <span>Get rides to church</span></label>
-        <label class="check"><input type="radio" name="role" value="driver" ${isDriver ? "checked" : ""}> <span>Give rides (I have a car)</span></label></fieldset>`
+        <label class="check"><input type="radio" name="role" value="rider" ${isDrv ? "" : "checked"}> <span>Get rides to church</span></label>
+        <label class="check"><input type="radio" name="role" value="driver" ${isDrv ? "checked" : ""}> <span>Give rides (I have a car)</span></label></fieldset>`
     : `<input type="hidden" name="role" value="${esc(p.role || "rider")}">`;
-  const driverBits = (isDriver || registering) ? `<fieldset class="field driverbits"><legend>If you drive</legend>
+  const driverBits = (isDrv || registering || leaderSelf) ? `<fieldset class="field driverbits"><legend>If you drive</legend>
+      ${leaderSelf ? chk("alsoDrives", p.status === "cleared" && p.seats > 0, "<strong>I also drive</strong> (I'm cleared to drive myself)") : ""}
       <label class="field">Seats free for passengers (not counting you)<input name="seats" type="number" min="0" max="14" value="${esc(p.seats ?? 3)}"></label>
       <label class="field">Vehicle (so riders can spot you)<input name="vehicle" value="${esc(p.vehicle || "")}" placeholder="e.g. Grey SUV"></label>
       ${chk("drivesEveryWeek", p.drivesEveryWeek, "I drive <strong>every</strong> Sunday unless I say otherwise")}
@@ -103,7 +104,7 @@ export function profileForm(S, p = {}, { leaderEditing = false, registering = fa
     </fieldset>` : "";
   const leaderBits = leaderEditing ? `<fieldset class="field"><legend>Leader only</legend>
       ${chk("priority", p.priority, "Priority rider (seated first)")}
-      ${isDriver ? `<label class="field">Driver status<select name="status">${["pending", "cleared", "suspended"].map((s) => `<option ${p.status === s ? "selected" : ""}>${s}</option>`).join("")}</select></label>
+      ${isDrv ? `<label class="field">Driver status<select name="status">${["pending", "cleared", "suspended"].map((s) => `<option ${p.status === s ? "selected" : ""}>${s}</option>`).join("")}</select></label>
       <p class="small muted">Set the status to <strong>cleared</strong> once you have vetted this driver. The records below are optional notes for you.</p>${chk("licenceOk", p.licenceOk, "Licence seen (optional note)")}${chk("insuranceOk", p.insuranceOk, "Insurance seen (optional note)")}
       <label class="field">Police check expiry (optional note)<input name="policeCheckExpiry" type="date" value="${esc(p.policeCheckExpiry || "")}"></label>` : ""}
       ${addingForSunday ? chk("needsRide", true, `Needs a ride on ${esc(fmtDate(addingForSunday))}`) + `<label class="field">People coming with them<input name="extraPeople" type="number" min="0" max="10" value="0"></label>` + chk("canSplit", false, "They said it's OK to split across cars") + chk("consentByPhone", false, "They agreed by phone to receive ride texts") : ""}
@@ -233,7 +234,7 @@ function ridersMap(S) { return new Map(S.data.profiles.map((p) => [p.id, p])); }
 function carOptions(S, sunday) {
   const weeks = S.data.weeks;
   const out = [];
-  for (const d of S.data.profiles.filter((p) => p.role === "driver")) {
+  for (const d of S.data.profiles.filter(isDriver)) {
     if (driverIssue({ ...d, available: driverAvailable(d, weeks, sunday) }, sunday)) continue;
     out.push({ value: `${d.id}|1`, label: `${d.name} · trip 1`, d, trip: 1 });
     if (d.secondTrip) out.push({ value: `${d.id}|2`, label: `${d.name} · trip 2`, d, trip: 2 });
@@ -315,7 +316,7 @@ function peopleTab(S) {
     const p = S.editing === "new" ? { role: "rider" } : S.data.profiles.find((x) => x.id === S.editing);
     return `<section class="card"><h2>${S.editing === "new" ? "Add a rider who phoned in" : esc(p.name)}</h2>${profileForm(S, p, { leaderEditing: true, addingForSunday: S.editing === "new" ? S.sunday : null })}</section>`;
   }
-  const drivers = S.data.profiles.filter((p) => p.role === "driver");
+  const drivers = S.data.profiles.filter((p) => isDriver(p) || (p.role === "driver"));
   const riders = S.data.profiles.filter((p) => p.role === "rider");
   const dRow = (d) => {
     const left = daysLeft(d.policeCheckExpiry, S.todayISO);
@@ -381,10 +382,16 @@ function textsTab(S) {
   return html;
 }
 
+function drivingTab(S) {
+  const drives = isDriver(S.me);
+  return `<details class="card soft" ${drives ? "" : "open"}><summary>${drives ? "My driving details" : "Do you drive too? Set it up here"}</summary>
+    <p class="small muted">Leaders can drive as well. You clear yourself, then you appear as a driver in the plan.</p>${profileForm(S, S.me, { leaderSelf: true })}</details>${drives ? driverView(S) : ""}`;
+}
+
 export function leaderView(S) {
   const openAlerts = S.data.alerts.filter((a) => !a.resolved).length;
-  const tabs = [["plan", "Plan"], ["people", "People"], ["alerts", `Alerts${openAlerts ? ` (${openAlerts})` : ""}`], ["texts", "Texts"]];
-  const body = { plan: planTab, people: peopleTab, alerts: alertsTab, texts: textsTab }[S.tab] || planTab;
+  const tabs = [["plan", "Plan"], ["people", "People"], ["alerts", `Alerts${openAlerts ? ` (${openAlerts})` : ""}`], ["texts", "Texts"], ["driving", "My driving"]];
+  const body = { plan: planTab, people: peopleTab, alerts: alertsTab, texts: textsTab, driving: drivingTab }[S.tab] || planTab;
   return `<nav class="tabs">${tabs.map(([k, l]) => `<button type="button" class="${S.tab === k ? "on" : ""}" data-act="tab" data-tab="${k}">${esc(l)}</button>`).join("")}</nav>${body(S)}`;
 }
 

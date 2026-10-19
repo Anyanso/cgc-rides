@@ -7,7 +7,7 @@ import { toISO, fmtDate } from "./dates.js";
 import { geocode } from "./geo.js";
 import { driverIssue } from "./matching.js";
 import { draftPlan, recompute, applyMove, reassignDriver } from "./planner.js";
-import { driverAvailable, CONSENT_WORDING } from "./models.js";
+import { driverAvailable, CONSENT_WORDING, isDriver } from "./models.js";
 import { shell, landingView, signInView, demoPickerView, roleView } from "./views.js";
 import { lastMinuteBroadcast } from "./texts.js";
 import { DEMO_CHURCH } from "./demo-data.js";
@@ -77,7 +77,7 @@ async function resolveChurch() {
 }
 
 function excludedFor(sunday) {
-  return S.data.profiles.filter((p) => p.role === "driver").map((d) => ({ name: d.name, reason: driverIssue({ ...d, available: driverAvailable(d, S.data.weeks, sunday) }, sunday) })).filter((e) => e.reason);
+  return S.data.profiles.filter(isDriver).map((d) => ({ name: d.name, reason: driverIssue({ ...d, available: driverAvailable(d, S.data.weeks, sunday) }, sunday) })).filter((e) => e.reason);
 }
 
 function planViewFromSaved() {
@@ -92,7 +92,7 @@ async function load() {
   if (!S.me) return;
   await resolveChurch();
   const defaults = { leader: "plan", driver: "sundays", rider: "rides" };
-  if (!S.tab || (S.me.role === "leader" && !["plan", "people", "alerts", "texts"].includes(S.tab)) ||
+  if (!S.tab || (S.me.role === "leader" && !["plan", "people", "alerts", "texts", "driving"].includes(S.tab)) ||
       (S.me.role === "driver" && !["sundays", "details"].includes(S.tab)) || (S.me.role === "rider" && !["rides", "details"].includes(S.tab))) S.tab = defaults[S.me.role];
   if (S.me.role === "rider") S.rides = await store.myRides();
   if (S.me.role === "driver") {
@@ -101,6 +101,9 @@ async function load() {
     for (const s of S.sundays) S.routes[s] = await store.myRoute(s);
   }
   if (S.me.role === "leader") {
+    S.weeks = await store.myWeeks();
+    S.routes = {};
+    for (const s of S.sundays) S.routes[s] = await store.myRoute(s);
     S.data = await store.leaderData();
     S.sunday = S.sunday && S.sundays.includes(S.sunday) ? S.sunday : S.sundays[0];
     if (!S.planView || !S.planView.dirty) planViewFromSaved();
@@ -118,6 +121,7 @@ function readProfile(form) {
   const bool = (n) => f.get(n) === "on";
   const out = { name: text("name"), phone: text("phone"), address: text("address"), neighbourhood: text("neighbourhood"), minor: bool("minor"), notes: text("notes") };
   if (has("role")) out.role = text("role");
+  if (has("alsoDrives")) out.status = bool("alsoDrives") ? "cleared" : "none";
   if (has("seats")) Object.assign(out, { seats: Number(f.get("seats")) || 0, vehicle: text("vehicle"), drivesEveryWeek: bool("drivesEveryWeek"), secondTrip: bool("secondTrip") });
   if (has("priority")) out.priority = bool("priority");
   if (has("status")) Object.assign(out, { status: text("status"), licenceOk: bool("licenceOk"), insuranceOk: bool("insuranceOk"), policeCheckExpiry: text("policeCheckExpiry") });
@@ -251,7 +255,8 @@ async function onSubmit(form) {
     const patch = await withLocation(raw, S.me || {});
     if (!registering) delete patch.role;
     S.me = await store.saveMyProfile(patch);
-    S.tab = null; await reload(); say(registering ? "You're registered." : "Saved.");
+    if (registering) S.tab = null;
+    await reload(); say(registering ? "You're registered." : "Saved.");
   }
 }
 

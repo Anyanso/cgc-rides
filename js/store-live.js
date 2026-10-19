@@ -62,7 +62,8 @@ export async function createLiveStore(config, { createClient } = {}) {
       const uid = getUid();
       const existing = await this.getMe();
       const row = profileToRow(patch);
-      delete row.id; delete row.user_id; delete row.email; delete row.driver_status;
+      delete row.id; delete row.user_id; delete row.email;
+      if (existing?.role !== "leader") delete row.driver_status;
       let res;
       if (existing) res = await from("profiles").update(row).eq("user_id", uid).select().single();
       else res = await from("profiles").insert({ ...row, user_id: uid, email: user.email }).select().single();

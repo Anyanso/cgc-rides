@@ -173,3 +173,21 @@ test("demo: a rider asks with people coming along; the leader can agree to a spl
   c.store.viewAs("leader");
   await assert.rejects(() => c.store.savePlan(c.sunday, "draft", {}, [{ riderId: "r-lydia", driverId: "d-samuel", trip: 1, seats: 5 }], []), /more people than seats/);
 });
+
+test("demo: a leader can also drive: appears as a driver, sees their own pickups, can say they can't make it", async () => {
+  const c = await leaderCtx();
+  await c.store.saveMyProfile({ seats: 3, vehicle: "Leader's car", drivesEveryWeek: true, status: "cleared", role: "leader" });
+  const data = await c.store.leaderData();
+  const me = data.profiles.find((p) => p.id === "leader");
+  assert.equal(me.role, "leader");
+  assert.equal(me.status, "cleared");
+  // Make the other drivers unavailable so the leader must carry people.
+  const weeks = [...data.weeks, ...data.profiles.filter((p) => p.role === "driver").map((d) => ({ driverId: d.id, sunday: c.sunday, available: false }))];
+  const p = await draftPlan({ data: { ...data, weeks }, sunday: c.sunday, church, config: CONFIG, fetchFn: offline });
+  const mine = p.assignments.filter((a) => a.driverId === "leader");
+  assert.ok(mine.length > 0 && mine.length <= 3);
+  await c.store.savePlan(c.sunday, "approved", {}, p.assignments, p.waitlist);
+  const route = await c.store.myRoute(c.sunday);
+  assert.equal(route.length, mine.length);
+  assert.equal(await c.store.cantMakeIt(c.sunday), mine.length);
+});
