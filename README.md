@@ -1,0 +1,85 @@
+# Chosen Generation Rides
+
+Sunday rides to **Chosen Generation Church** (Saskatoon). Riders ask for a lift, drivers say how many seats they have, and the transport leader approves a plan the app drafts. It is a stopgap until the church has a van.
+
+*Nobody in this church walks alone, including to the front door.*
+
+**Everything here is free to run:** a static website on GitHub Pages, a free Supabase database, and free OpenStreetMap services for maps. No texting service is needed. The app writes the messages and the leader copies them into the group chat.
+
+## What it does
+
+| Who | Can do |
+|---|---|
+| **Rider** | Ask for any of the next 4 Sundays (optionally "ride home too"); opt in to a weekly check-in; see driver name, phone, car, pickup time and "be ready by" time once approved; "I can't make it" |
+| **Driver** | Set seats, every-week or week-by-week availability, second trip; see an ordered pickup list with addresses, notes and a Google Maps route; "I can't make it" |
+| **Leader** | See requests vs seats; draft the plan; move people by hand; approve; review driver checks (licence, insurance, police check expiry); add riders who phoned in; reassign in one click when a driver cancels; copy ready-made texts |
+
+**Matching.** Each rider goes to the car where they add the fewest minutes on the way to church (real road times from OpenStreetMap routing, straight-line estimate if that's unreachable). Priority riders go first. Seats are the real limit, so drivers can offer a second trip, and anyone left goes on a waiting list **with the reason written out**.
+
+**Times.** Drivers are scheduled to arrive 15 minutes before the 11:45 service (11:30). Pickup times are worked backward from that along each route; each rider's "be ready by" time is their pickup minus 5 minutes. Change either in `js/config.js`, or set `readyBy: "10:45"` for a fixed ceiling.
+
+**Weekly rhythm.** Thursday: copy the check-in text to the group (opt-in riders; silence means no ride). Saturday noon: requests close. Then draft, review, approve, copy texts. Drivers and riders see nothing until you approve.
+
+## Safety and privacy (enforced by the database, `supabase/schema.sql`)
+
+- Only drivers who are **cleared** (licence, insurance, police / vulnerable-sector check **not expired**) can be given riders. The database refuses to save a plan otherwise.
+- **Under-18** riders go only with a driver who has a current check; a guardian's phone is required.
+- **Same-gender** requests are honoured by the draft. The leader can override by hand and is warned.
+- A rider's address and phone are visible only to the **leader and their assigned driver**, and only after approval. Riders see their driver's name, phone and car, not the driver's home address.
+- Nobody can make themselves a leader, clear themselves as a driver, or edit their own check dates.
+- **Text consent** is recorded with the date and the exact wording (CASL). The leader can record consent given by phone.
+- Seats can't be exceeded in a saved plan.
+
+## Try it now (demo mode)
+
+Open the site. With no Supabase keys in `js/config.js` it runs in **demo mode** with made-up people and a "view as" switch. Nothing is saved. Demo plans use a **placeholder church location**.
+
+Locally: `python3 -m http.server` in this folder, then open http://localhost:8000.
+
+## Go live (about 30 minutes)
+
+1. **Church location.** In `js/config.js`, set `church.address` (the app looks it up) or `church.lat` / `church.lng`. Until you do, the leader sees a warning and can't draft plans.
+2. **Supabase.** Create a free project at supabase.com. SQL Editor → paste all of `supabase/schema.sql` → Run.
+3. **Sign-in.** Authentication → Providers → Email is on by default (magic link, no password). Authentication → URL Configuration → set **Site URL** to your GitHub Pages address (`https://anyanso.github.io/cgc-rides/`).
+4. **Keys.** Project Settings → API. Paste the **Project URL** and the **anon public** key into `supabase.url` and `supabase.anonKey` in `js/config.js`. Never paste the `service_role` key anywhere.
+5. **Make yourself the leader.** Open the site, sign in with your email (this creates your login). Then in the SQL Editor run (your own email and name):
+
+   ```sql
+   insert into profiles (user_id, email, full_name, role)
+   select id, email, 'Your Name', 'leader' from auth.users where email = 'you@example.com'
+   on conflict (user_id) do update set role = 'leader';
+   ```
+
+   To hand over to a new coordinator, do the same for them and set your own role back to `rider`. No code changes.
+6. **Publish.** Repo → Settings → Pages → Deploy from branch → `main` / root.
+
+## Three-Sunday test plan
+
+1. **Sunday 1:** 2 drivers and 3 to 4 riders you know. Clear the drivers (People → Edit: confirm licence and insurance, set the check expiry date, status *cleared*). Run the whole weekly rhythm. Check every pickup time against a real drive.
+2. **Sunday 2:** all drivers. Practise a driver tapping "I can't make it" and the leader pressing Reassign.
+3. **Sunday 3:** the regular riders, with weekly check-in on.
+
+Things to watch: pickup times vs reality (adjust `stopMin` and `maxDetourMin`), riders whose address couldn't be found, and whether drivers read their list.
+
+## Tuning the matching (`js/config.js`)
+
+`stopMin` minutes per pickup · `unloadMin` · `maxDetourMin` longest extra detour for one rider · `maxRouteMin` longest drive for one trip · `earliestPickup` · `arriveBeforeMin` · `readyBufferMin`.
+
+## What is and isn't verified
+
+`npm install && npm test` runs 38 tests: the matching engine (rules, second trips, waitlist, 150 riders), the privacy and safety rules **in a real Postgres** (PGlite), the demo store, every screen rendered for every role, and request building/parsing for routing and address lookup.
+
+**Not tested from the build environment** (no outside network there): the real Supabase project and email sign-in, and the real OpenStreetMap routing and address services. Do the first live run yourself with the test plan above.
+
+Known limits:
+- Neighbourhood centres are hand-placed approximations (about 1 to 2 km) and are used only if an address can't be found; such riders show "Location approximate". Several neighbourhoods have no fallback and need a findable address.
+- The free public routing server is a shared demo service meant for light use. If it fails, the app uses straight-line estimates and says so.
+- Texts are copy-and-paste, not automatic.
+
+## Later
+
+Automatic texting (Twilio), rides home with a different driver, a church van as one large vehicle, live "driver is 5 minutes away".
+
+## Layout
+
+`index.html` · `css/styles.css` · `js/` (`matching.js` engine, `routing.js`, `geo.js`, `planner.js`, `texts.js`, `views.js`, `app.js`, `store-demo.js`, `store-live.js`, `config.js`) · `supabase/schema.sql` · `tests/`

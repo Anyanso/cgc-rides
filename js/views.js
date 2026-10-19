@@ -1,0 +1,395 @@
+// Screens. Every function here takes the app state and returns an HTML string, nothing else:
+// no network, no clicking. That keeps them testable in Node. Buttons carry data-act="..."
+// and app.js listens for them. EVERY piece of user-supplied text goes through esc().
+
+import { NEIGHBOURHOODS } from "./geo.js";
+import { fmtDate, fmtMin, isClosed, toMin } from "./dates.js";
+import { driverAvailable, DRIVER_STATUS_TEXT, CONSENT_WORDING, daysLeft } from "./models.js";
+import { driverIssue } from "./matching.js";
+import { groupCars } from "./planner.js";
+import * as T from "./texts.js";
+
+export const esc = (v) =>
+  String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
+const badge = (text, kind = "muted") => `<span class="badge ${kind}">${esc(text)}</span>`;
+const banner = (kind, html) => `<div class="banner ${kind}">${html}</div>`;
+const attr = (obj) => Object.entries(obj).map(([k, v]) => `data-${k}="${esc(v)}"`).join(" ");
+const btn = (label, act, data = {}, kind = "ghost") => `<button class="btn ${kind}" type="button" data-act="${act}" ${attr(data)}>${esc(label)}</button>`;
+const telLink = (p) => (p ? `<a href="tel:${esc(String(p).replace(/[^+\d]/g, ""))}">${esc(p)}</a>` : "");
+const firstName = (n) => String(n || "").trim().split(/\s+/)[0];
+
+function riderBadges(r) {
+  return [
+    r.priority && badge("Priority", "gold"),
+    r.minor && badge("Under 18", "red"),
+    r.prefersSameGender && badge("Same-gender driver", "clay"),
+    r.rideHome && badge("Ride home too", "muted"),
+    r.geoSource === "neighbourhood" && badge("Location approximate", "muted"),
+    ("lat" in r && r.lat == null) && badge("Not on map", "red"),
+  ].filter(Boolean).join(" ");
+}
+
+// ---------------------------------------------------------------- shell + entry screens
+
+export function shell(S, inner) {
+  const who = S.me ? `<span class="who">${esc(firstName(S.me.name))} · ${esc(S.me.role)}</span>` : "";
+  const demo = S.mode === "demo"
+    ? `<div class="demobar"><strong>DEMO</strong> · fictional people, nothing is saved. ${
+        S.demoPeople ? `<label>View as <select data-act-change="viewas">${S.demoPeople.map((p) =>
+          `<option value="${esc(p.id)}" ${S.session?.userId === p.id ? "selected" : ""}>${esc(p.name)} (${esc(p.role)})</option>`).join("")}</select></label>` : ""}</div>`
+    : "";
+  return `${demo}
+  <header class="top">
+    <a class="brand" href="#" data-act="home"><img src="assets/logo.png" alt="" width="36" height="36"><span>${esc(S.config.appName)}</span></a>
+    <div class="topright">${who}${S.session ? btn("Sign out", "signout", {}, "link") : ""}</div>
+  </header>
+  <main>${S.toast ? `<div class="toast" role="status">${esc(S.toast)}</div>` : ""}${S.error ? banner("err", esc(S.error)) : ""}${inner}</main>
+  <footer>${esc(S.config.churchName)} · Sunday service ${esc(fmtMin(toMin(S.config.service.time)))}</footer>`;
+}
+
+export function landingView(S) {
+  return `<section class="hero">
+    <img src="assets/logo.png" alt="Chosen Generation Church crown" width="96" height="96">
+    <h1>Nobody in this church walks alone — including to the front door.</h1>
+    <p class="lede">A ride to church shouldn't be the reason someone misses it. We match riders with drivers who are already headed their way.</p>
+    <div class="stack">
+      ${S.mode === "demo" ? btn("Try the demo", "demo-start", {}, "primary") : btn("Sign in or sign up", "goto-signin", {}, "primary")}
+    </div>
+    <ul class="points">
+      <li><strong>Need a ride?</strong> Ask once, or every week with a quick check-in.</li>
+      <li><strong>Can drive?</strong> Tell us your seats and which Sundays. We only plan around you when you're free.</li>
+      <li><strong>Safe by design.</strong> Drivers are checked first, and your address is shared only with your driver.</li>
+    </ul>
+  </section>`;
+}
+
+export function signInView(S) {
+  if (S.signInSent) return `<section class="card"><h2>Check your email</h2><p>We sent a sign-in link to <strong>${esc(S.signInSent)}</strong>. Open it on this device. No password needed.</p>${btn("Use a different email", "signin-reset")}</section>`;
+  return `<section class="card"><h2>Sign in or sign up</h2>
+    <p class="muted">Enter your email and we'll send you a one-time link. New here? The same link creates your account.</p>
+    <form data-form="signin" class="stack">
+      <label class="field">Email<input name="email" type="email" required autocomplete="email" inputmode="email"></label>
+      <button class="btn primary" type="submit">Email me a link</button>
+    </form></section>`;
+}
+
+export function demoPickerView(S) {
+  const group = (role, title) => `<h3>${title}</h3><div class="grid">${S.demoPeople.filter((p) => p.role === role).map((p) =>
+    `<button class="card pick" type="button" data-act="viewas" data-id="${esc(p.id)}"><strong>${esc(p.name)}</strong>${p.status && p.status !== "none" ? `<br>${badge(p.status, p.status === "cleared" ? "ok" : "clay")}` : ""}</button>`).join("")}</div>`;
+  return `<section><h2>Pick who to view the app as</h2>
+    <p class="muted">Every person below is made up. You can switch at any time using the bar at the top.</p>
+    ${group("leader", "Transport leader")}${group("driver", "Drivers")}${group("rider", "Riders")}</section>`;
+}
+
+// ---------------------------------------------------------------- profile form (all roles)
+
+export function profileForm(S, p = {}, { leaderEditing = false, registering = false, addingForSunday = null } = {}) {
+  const isDriver = p.role === "driver";
+  const hoods = NEIGHBOURHOODS.map((n) => `<option ${p.neighbourhood === n.name ? "selected" : ""}>${esc(n.name)}</option>`).join("");
+  const chk = (name, on, label) => `<label class="check"><input type="checkbox" name="${name}" ${on ? "checked" : ""}> ${label}</label>`;
+  const roleChoice = registering
+    ? `<fieldset class="field"><legend>I want to…</legend>
+        <label class="check"><input type="radio" name="role" value="rider" ${isDriver ? "" : "checked"}> Get rides to church</label>
+        <label class="check"><input type="radio" name="role" value="driver" ${isDriver ? "checked" : ""}> Give rides (I have a car)</label></fieldset>`
+    : `<input type="hidden" name="role" value="${esc(p.role || "rider")}">`;
+  const driverBits = (isDriver || registering) ? `<fieldset class="field driverbits"><legend>If you drive</legend>
+      <label class="field">Seats free for passengers (not counting you)<input name="seats" type="number" min="0" max="14" value="${esc(p.seats ?? 3)}"></label>
+      <label class="field">Vehicle (so riders can spot you)<input name="vehicle" value="${esc(p.vehicle || "")}" placeholder="e.g. Grey SUV"></label>
+      ${chk("drivesEveryWeek", p.drivesEveryWeek, "I drive <strong>every</strong> Sunday unless I say otherwise")}
+      ${chk("secondTrip", p.secondTrip, "I can do a <strong>second trip</strong> if there are more riders than seats")}
+      <p class="small muted">The transport leader confirms your licence, insurance and police / vulnerable-sector check before you are given riders.</p>
+    </fieldset>` : "";
+  const leaderBits = leaderEditing ? `<fieldset class="field"><legend>Leader only</legend>
+      ${chk("priority", p.priority, "Priority rider (seated first)")}
+      ${isDriver ? `<label class="field">Driver status<select name="status">${["pending", "cleared", "suspended"].map((s) => `<option ${p.status === s ? "selected" : ""}>${s}</option>`).join("")}</select></label>
+      ${chk("licenceOk", p.licenceOk, "Licence confirmed")}${chk("insuranceOk", p.insuranceOk, "Insurance confirmed")}
+      <label class="field">Police / vulnerable-sector check expires<input name="policeCheckExpiry" type="date" value="${esc(p.policeCheckExpiry || "")}"></label>` : ""}
+      ${addingForSunday ? chk("needsRide", true, `Needs a ride on ${esc(fmtDate(addingForSunday))}`) + chk("consentByPhone", false, "They agreed by phone to receive ride texts") : ""}
+    </fieldset>` : "";
+  return `<form data-form="profile" class="stack" ${p.id ? `data-id="${esc(p.id)}"` : ""}>
+    ${roleChoice}
+    <label class="field">Full name<input name="name" required value="${esc(p.name || "")}" autocomplete="name"></label>
+    <label class="field">Phone<input name="phone" type="tel" value="${esc(p.phone || "")}" autocomplete="tel"></label>
+    <label class="field">Home address (street and number)<input name="address" value="${esc(p.address || "")}" autocomplete="street-address"></label>
+    <label class="field">Neighbourhood<select name="neighbourhood"><option value="">Choose…</option>${hoods}</select></label>
+    <label class="field">Gender<select name="gender"><option value="">Prefer not to say</option><option value="F" ${p.gender === "F" ? "selected" : ""}>Female</option><option value="M" ${p.gender === "M" ? "selected" : ""}>Male</option></select></label>
+    ${chk("prefersSameGender", p.prefersSameGender, "I'd like a driver of the same gender")}
+    ${chk("minor", p.minor, "This rider is under 18")}
+    <div class="field minorbits"><label class="field">Parent / guardian name<input name="guardianName" value="${esc(p.guardianName || "")}"></label>
+      <label class="field">Parent / guardian phone<input name="guardianPhone" type="tel" value="${esc(p.guardianPhone || "")}"></label>
+      <p class="small muted">Riders under 18 are only placed with a driver who has a current police check. Required if under 18.</p></div>
+    <label class="field">Anything the driver should know (optional)<input name="notes" value="${esc(p.notes || "")}" placeholder="e.g. uses a walker"></label>
+    ${driverBits}${leaderBits}
+    <div class="row"><button class="btn primary" type="submit">Save</button>${leaderEditing || registering ? "" : ""}${leaderEditing ? btn("Cancel", "edit-cancel") : ""}</div>
+  </form>`;
+}
+
+export function registerView(S) {
+  return `<section class="card"><h2>Welcome. Tell us about you</h2>
+    <p class="muted">Signed in as ${esc(S.session?.email || "")}. Your address is only ever shown to the transport leader and the driver assigned to you.</p>
+    ${profileForm(S, { role: "rider" }, { registering: true })}</section>`;
+}
+
+// ---------------------------------------------------------------- rider
+
+function consentBlock(S) {
+  const me = S.me;
+  if (me.textsConsentAt) {
+    return `<div class="card soft"><strong>Ride texts: on</strong> <span class="small muted">(agreed ${esc(fmtDate(me.textsConsentAt.slice(0, 10), { month: "short", day: "numeric", year: "numeric" }))})</span> ${btn("Stop texts", "consent-off", {}, "link")}</div>`;
+  }
+  return `<div class="card soft"><strong>Get ride texts?</strong>
+    <p class="small">${esc(CONSENT_WORDING)}</p>
+    ${btn("Yes, text me about my rides", "consent-on", {}, "primary")}</div>`;
+}
+
+export function riderView(S) {
+  const me = S.me;
+  if (S.tab === "details") return `<section class="card"><h2>My details</h2>${profileForm(S, me)}</section>`;
+  const cards = S.sundays.map((sunday) => {
+    const ride = S.rides.find((r) => r.sunday === sunday);
+    const closed = isClosed(sunday, S.now);
+    let body;
+    if (!ride || ride.status === "cancelled") {
+      body = closed
+        ? `<p class="muted">Requests for this Sunday have closed. Please contact the transport leader.</p>`
+        : `<form data-form="request" data-sunday="${esc(sunday)}" class="stack">
+            <label class="check"><input type="checkbox" name="rideHome"> I need a ride home too</label>
+            <label class="field">Note for the leader (optional)<input name="note" placeholder="e.g. bringing a small child"></label>
+            <button class="btn primary" type="submit">${ride ? "Ask again" : "I need a ride"}</button></form>${ride ? `<p class="small muted">You cancelled this one.</p>` : ""}`;
+    } else if (ride.status === "seated") {
+      body = `<div class="driver">
+          <p><strong>${esc(ride.driverName)}</strong> will pick you up${ride.vehicle ? ` in a ${esc(ride.vehicle)}` : ""}.</p>
+          <p class="bigtime">Around ${esc(fmtMin(ride.pickupMin))}</p>
+          <p>Please be ready by <strong>${esc(fmtMin(ride.readyByMin))}</strong> to avoid delays.</p>
+          ${ride.driverPhone ? `<p>Driver's number: ${telLink(ride.driverPhone)}</p>` : ""}
+          ${ride.rideHome ? `<p class="small muted">You asked for a ride home too. The leader will confirm that separately.</p>` : ""}
+        </div>${btn("I can't make it", "cancel-ride", { sunday }, "danger")}`;
+    } else if (ride.status === "waitlisted") {
+      body = `<p>We're still working on a seat for you. The transport leader will message you as soon as we have one.</p>${btn("I can't make it", "cancel-ride", { sunday }, "danger")}`;
+    } else {
+      body = `<p>${badge("Requested", "gold")} The leader will confirm your driver after requests close (Saturday noon).</p>${btn("Cancel my request", "cancel-ride", { sunday }, "ghost")}`;
+    }
+    return `<article class="card"><h3>${esc(fmtDate(sunday, { weekday: "long", month: "long", day: "numeric" }))}</h3>${body}</article>`;
+  }).join("");
+  return `<section><h2>Hi ${esc(firstName(me.name))}</h2>
+    ${me.lat == null ? banner("warn", "We couldn't place your address on the map yet. The leader will check it with you before planning.") : ""}
+    <label class="check card soft"><input type="checkbox" data-act-change="weekly" ${me.weeklyCheckin ? "checked" : ""}> <span><strong>Check in with me every week.</strong><br><span class="small muted">We'll ask “Do you need a ride this Sunday?” If you don't answer, we won't assume you do.</span></span></label>
+    ${cards}${consentBlock(S)}</section>`;
+}
+
+// ---------------------------------------------------------------- driver
+
+function mapsLink(S, stops) {
+  const c = S.church;
+  if (!c || c.lat == null) return "";
+  const pts = stops.filter((s) => s.lat != null).map((s) => `${s.lat},${s.lng}`);
+  if (!pts.length) return "";
+  const q = `https://www.google.com/maps/dir/?api=1&travelmode=driving&destination=${c.lat},${c.lng}&waypoints=${pts.join("%7C")}`;
+  return `<a class="btn primary" href="${esc(q)}" target="_blank" rel="noopener">Open route in Google Maps</a>`;
+}
+
+export function driverView(S) {
+  const me = S.me;
+  if (S.tab === "details") return `<section class="card"><h2>My details</h2>${profileForm(S, me)}</section>`;
+  const left = daysLeft(me.policeCheckExpiry, S.todayISO);
+  const status = me.status === "cleared"
+    ? (left != null && left < 0 ? banner("err", "Your police check has expired. You won't be given riders until the leader updates it.")
+      : left != null && left <= 30 ? banner("warn", `Your police check expires in ${left} day(s). Please renew it so you can keep driving.`)
+      : banner("ok", `Cleared to drive${me.policeCheckExpiry ? ` · police check valid to ${esc(fmtDate(me.policeCheckExpiry, { month: "short", day: "numeric", year: "numeric" }))}` : ""}.`))
+    : banner(me.status === "suspended" ? "err" : "warn", esc(DRIVER_STATUS_TEXT[me.status] || DRIVER_STATUS_TEXT.pending) + ".");
+  const cards = S.sundays.map((sunday) => {
+    const avail = driverAvailable(me, S.weeks, sunday);
+    const route = S.routes[sunday] || [];
+    const trips = [...new Set(route.map((r) => r.trip))];
+    let body = `<p>${avail ? badge("You're driving", "ok") : badge("Not driving", "muted")}
+      ${btn(avail ? "I can't drive this Sunday" : "I can drive this Sunday", "toggle-avail", { sunday, to: avail ? "no" : "yes" })}</p>`;
+    if (route.length) {
+      body += trips.map((t) => {
+        const stops = route.filter((r) => r.trip === t);
+        return `<div class="route"><h4>${trips.length > 1 ? `Trip ${t}` : "Your pickups"}</h4>
+          <ol class="stops">${stops.map((s) => `<li>
+            <div class="stoptime">${esc(fmtMin(s.pickupMin))}<span class="small muted">ready ${esc(fmtMin(s.readyByMin))}</span></div>
+            <div><strong>${esc(s.riderName)}</strong> ${riderBadges({ minor: s.minor, rideHome: s.rideHome })}<br>
+            ${esc(s.address || "")}${s.neighbourhood ? ` <span class="muted">· ${esc(s.neighbourhood)}</span>` : ""}<br>
+            ${telLink(s.riderPhone)}${s.minor && s.guardianPhone ? ` · Guardian ${esc(s.guardianName || "")}: ${telLink(s.guardianPhone)}` : ""}
+            ${s.riderNotes ? `<br><em>${esc(s.riderNotes)}</em>` : ""}${s.requestNote ? `<br><em>${esc(s.requestNote)}</em>` : ""}</div></li>`).join("")}</ol>
+          <p class="small muted">Aim to arrive at church by ${esc(fmtMin(stops[0].arriveMin))}.</p>${mapsLink(S, stops)}</div>`;
+      }).join("") + `<p>${btn("I can't make it", "cant-make-it", { sunday }, "danger")}</p>`;
+    } else if (avail) {
+      body += `<p class="muted">No riders confirmed yet. You'll see your pickups here once the leader approves the plan.</p>`;
+    }
+    return `<article class="card"><h3>${esc(fmtDate(sunday, { weekday: "long", month: "long", day: "numeric" }))}</h3>${body}</article>`;
+  }).join("");
+  return `<section><h2>Hi ${esc(firstName(me.name))}</h2>${status}
+    <p class="small muted">${esc(me.seats)} seat(s)${me.secondTrip ? " · second trip OK" : ""}${me.vehicle ? ` · ${esc(me.vehicle)}` : ""}. Change in My details.</p>${cards}${consentBlock(S)}</section>`;
+}
+
+// ---------------------------------------------------------------- leader
+
+function ridersMap(S) { return new Map(S.data.profiles.map((p) => [p.id, p])); }
+
+function carOptions(S, sunday) {
+  const weeks = S.data.weeks;
+  const out = [];
+  for (const d of S.data.profiles.filter((p) => p.role === "driver")) {
+    if (driverIssue({ ...d, available: driverAvailable(d, weeks, sunday) }, sunday)) continue;
+    out.push({ value: `${d.id}|1`, label: `${d.name} · trip 1`, d, trip: 1 });
+    if (d.secondTrip) out.push({ value: `${d.id}|2`, label: `${d.name} · trip 2`, d, trip: 2 });
+  }
+  return out;
+}
+
+function moveSelect(S, riderId, current) {
+  const opts = carOptions(S, S.sunday);
+  return `<select class="move" data-act-change="move" data-rider="${esc(riderId)}" aria-label="Move rider">
+    <option value="">Move to…</option>
+    ${opts.filter((o) => o.value !== current).map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join("")}
+    ${current !== "wait" ? `<option value="wait">Waitlist</option>` : ""}</select>`;
+}
+
+function planTab(S) {
+  const sunday = S.sunday;
+  const people = ridersMap(S);
+  const asking = S.data.requests.filter((r) => r.sunday === sunday && r.status !== "cancelled");
+  const cars = carOptions(S, sunday);
+  const seats = [...new Map(cars.map((c) => [c.value, c])).values()].reduce((n, c) => n + c.d.seats, 0);
+  const pv = S.planView;
+  const chips = S.sundays.map((s) => {
+    const n = S.data.requests.filter((r) => r.sunday === s && r.status !== "cancelled").length;
+    const st = S.data.plans[s]?.status;
+    return `<button type="button" class="chip ${s === sunday ? "on" : ""}" data-act="pick-sunday" data-sunday="${esc(s)}">${esc(fmtDate(s))}<small>${n} asking${st ? ` · ${st}` : ""}</small></button>`;
+  }).join("");
+
+  let html = `<div class="chips">${chips}</div>`;
+  if (S.churchWarning) html += banner("warn", `<strong>Church location not set.</strong> ${esc(S.churchWarning)}`);
+  if (S.mode === "demo") html += banner("info", `Demo plans use a placeholder church location (${esc(S.demoChurchLabel)}).`);
+  html += `<div class="tiles"><div class="tile"><b>${asking.length}</b>asking</div><div class="tile"><b>${seats}</b>seats offered</div>
+    <div class="tile"><b>${pv?.assignments.length ?? 0}</b>seated</div><div class="tile"><b>${pv?.waitlist.length ?? 0}</b>waitlist</div></div>`;
+  if (asking.length > seats) html += banner("warn", `${asking.length} riders are asking but only ${seats} seats are offered. Ask drivers about a second trip, or recruit another driver.`);
+
+  const status = !pv ? badge("No plan yet", "muted") : pv.status === "approved" ? badge(pv.dirty ? "Approved · changes not saved" : "Approved and shared", "ok") : badge(pv.dirty ? "Draft · not saved" : "Draft saved", "gold");
+  html += `<div class="row wrap">${status}${S.busy ? `<span class="small muted">Working…</span>` : ""}</div>
+    <div class="row wrap">${btn(pv ? "Redraft the plan" : "Draft the plan", "draft", {}, "primary")}
+    ${pv ? btn("Save draft", "save-draft") + btn(pv.status === "approved" ? "Save changes" : "Approve & share", "approve", {}, "primary") : ""}</div>
+    <p class="small muted">Requests close Saturday at noon${isClosed(sunday, S.now) ? " (closed)" : ""}. The app proposes; nothing reaches drivers and riders until you approve.</p>`;
+
+  if (pv?.travelNote) html += banner("warn", esc(pv.travelNote));
+  else if (pv?.travelSource === "estimate" && !S.config.routing.enabled) html += banner("info", "Using straight-line estimates (road routing is switched off in settings).");
+  if (pv?.warnings?.length) html += banner("warn", `<strong>Check these:</strong><ul>${pv.warnings.map((w) => `<li>${esc(w.text)}</li>`).join("")}</ul>`);
+
+  if (!pv) {
+    html += `<h3>Asking for a ride (${asking.length})</h3><ul class="plain">${asking.map((r) => { const p = people.get(r.riderId); return p ? `<li><strong>${esc(p.name)}</strong> ${esc(p.neighbourhood || "")} ${riderBadges({ ...p, rideHome: r.rideHome })}</li>` : ""; }).join("") || "<li class='muted'>Nobody yet.</li>"}</ul>`;
+    return html;
+  }
+
+  const cardsData = groupCars(pv.assignments, S.data.profiles);
+  const tripMeta = new Map((pv.trips || []).map((t) => [`${t.driverId}|${t.trip}`, t]));
+  html += cardsData.map((car) => {
+    const d = people.get(car.driverId);
+    const meta = tripMeta.get(`${car.driverId}|${car.trip}`);
+    return `<article class="card car"><header><h3>${esc(d?.name || "Driver")}${car.trip > 1 ? " · trip 2" : ""}</h3>
+      <span class="small muted">${car.stops.length}/${esc(d?.seats ?? "?")} seats${d?.vehicle ? ` · ${esc(d.vehicle)}` : ""}${meta ? ` · leaves ${esc(fmtMin(meta.departMin))} · arrives ${esc(fmtMin(meta.arriveMin))}` : ""}</span></header>
+      <ol class="stops">${car.stops.map((s) => { const r = people.get(s.riderId); return `<li><div class="stoptime">${esc(fmtMin(s.pickupMin))}<span class="small muted">ready ${esc(fmtMin(s.readyByMin))}</span></div>
+        <div><strong>${esc(r?.name || "Rider")}</strong> ${riderBadges({ ...(r || {}), rideHome: asking.find((q) => q.riderId === s.riderId)?.rideHome })}<br><span class="small">${esc(r?.address || "")}${r?.neighbourhood ? ` · ${esc(r.neighbourhood)}` : ""}</span><br>${moveSelect(S, s.riderId, `${car.driverId}|${car.trip}`)}</div></li>`; }).join("")}</ol></article>`;
+  }).join("") || `<p class="muted">Nobody is seated yet.</p>`;
+
+  if (pv.waitlist.length) {
+    html += `<h3>Waiting list (${pv.waitlist.length})</h3>` + pv.waitlist.map((w) => {
+      const r = people.get(w.riderId);
+      return `<article class="card warn"><strong>${esc(r?.name || "Rider")}</strong> ${r ? riderBadges(r) : ""}<p class="small">${esc(w.reason)}</p>${moveSelect(S, w.riderId, "wait")}</article>`;
+    }).join("");
+  }
+  if (pv.excluded?.length) {
+    html += `<details class="card soft"><summary>${pv.excluded.length} driver(s) not driving this Sunday</summary><ul class="plain">${pv.excluded.map((e) => `<li><strong>${esc(e.name)}</strong>: ${esc(e.reason)}</li>`).join("")}</ul></details>`;
+  }
+  return html;
+}
+
+function peopleTab(S) {
+  if (S.editing) {
+    const p = S.editing === "new" ? { role: "rider" } : S.data.profiles.find((x) => x.id === S.editing);
+    return `<section class="card"><h2>${S.editing === "new" ? "Add a rider who phoned in" : esc(p.name)}</h2>${profileForm(S, p, { leaderEditing: true, addingForSunday: S.editing === "new" ? S.sunday : null })}</section>`;
+  }
+  const drivers = S.data.profiles.filter((p) => p.role === "driver");
+  const riders = S.data.profiles.filter((p) => p.role === "rider");
+  const dRow = (d) => {
+    const left = daysLeft(d.policeCheckExpiry, S.todayISO);
+    const st = d.status === "cleared" ? (left != null && left < 0 ? badge("Check expired", "red") : badge("Cleared", "ok")) : badge(d.status, d.status === "pending" ? "clay" : "red");
+    return `<li class="personrow"><div><strong>${esc(d.name)}</strong> ${st}<br><span class="small muted">${esc(d.seats)} seats · ${esc(d.neighbourhood || "no area")} · check ${d.policeCheckExpiry ? `to ${esc(d.policeCheckExpiry)}${left != null && left >= 0 && left <= 30 ? ` (${left}d left)` : ""}` : "not on file"} · licence ${d.licenceOk ? "✓" : "✗"} · insurance ${d.insuranceOk ? "✓" : "✗"}</span></div>${btn("Edit / review", "edit", { id: d.id })}</li>`;
+  };
+  const rRow = (r) => `<li class="personrow"><div><strong>${esc(r.name)}</strong> ${riderBadges(r)}<br><span class="small muted">${esc(r.neighbourhood || "")} · ${r.textsConsentAt ? "texts OK" : "no text consent"}${r.weeklyCheckin ? " · weekly check-in" : ""}</span></div>${btn("Edit", "edit", { id: r.id })}</li>`;
+  return `<div class="row wrap">${btn("Add a rider who phoned in", "edit", { id: "new" }, "primary")}</div>
+    <h3>Drivers (${drivers.length})</h3><ul class="plain">${drivers.map(dRow).join("") || "<li class='muted'>No drivers yet.</li>"}</ul>
+    <h3>Riders (${riders.length})</h3><ul class="plain">${riders.map(rRow).join("") || "<li class='muted'>No riders yet.</li>"}</ul>`;
+}
+
+function alertsTab(S) {
+  const open = S.data.alerts.filter((a) => !a.resolved);
+  const done = S.data.alerts.filter((a) => a.resolved);
+  const row = (a) => `<article class="card ${a.resolved ? "soft" : "warn"}"><p>${esc(a.message)}</p>
+    ${a.resolved ? "" : `<div class="row wrap">${a.kind === "driver_cancel" ? btn("Reassign their riders", "reassign", { driver: a.driverId, sunday: a.sunday, alert: a.id }, "primary") : ""}${btn("Mark done", "resolve", { id: a.id })}</div>`}</article>`;
+  return `<h3>Needs attention (${open.length})</h3>${open.map(row).join("") || "<p class='muted'>Nothing right now.</p>"}
+    ${done.length ? `<details><summary>${done.length} done</summary>${done.slice(0, 20).map(row).join("")}</details>` : ""}`;
+}
+
+function copyBlock(label, text, note = "") {
+  return `<article class="card"><strong>${esc(label)}</strong>${note ? `<p class="small muted">${esc(note)}</p>` : ""}<pre class="msg">${esc(text)}</pre>${btn("Copy", "copy", { text }, "primary")}</article>`;
+}
+
+function textsTab(S) {
+  const sunday = S.sunday;
+  const plan = S.data.plans[sunday];
+  const people = ridersMap(S);
+  const approved = plan?.status === "approved";
+  const chips = S.sundays.map((s) => `<button type="button" class="chip ${s === sunday ? "on" : ""}" data-act="pick-sunday" data-sunday="${esc(s)}">${esc(fmtDate(s))}</button>`).join("");
+  const url = S.appUrl || "";
+  let html = `<div class="chips">${chips}</div>
+    <p class="small muted">Nothing is sent from here. Copy a message and paste it into the group chat or a text. Group messages never include addresses. Only text people who agreed to texts.</p>`;
+  html += copyBlock("Weekly check-in (Thursday, to the group)", T.weeklyCheckin(sunday, url), "Opt-in riders only. Silence means no ride.");
+  html += copyBlock("Saturday reminder (to the group)", T.reminder(sunday));
+  if (approved) {
+    const asg = plan.assignments;
+    html += `<h3>Ride details to each rider</h3>`;
+    for (const a of asg) {
+      const r = people.get(a.riderId); const d = people.get(a.driverId);
+      if (!r || !d) continue;
+      html += copyBlock(`${r.name}${r.textsConsentAt ? "" : " (no text consent: call instead)"}`, T.riderDetails(sunday, r, d, a), `${r.phone || "no phone on file"}`);
+    }
+    html += `<h3>Pickup list to each driver</h3>`;
+    const cars = groupCars(asg, S.data.profiles);
+    for (const did of [...new Set(cars.map((c) => c.driverId))]) {
+      const d = people.get(did);
+      html += copyBlock(d.name, T.driverRoute(sunday, d, cars.filter((c) => c.driverId === did), people), d.phone || "no phone on file");
+    }
+    for (const w of plan.waitlist) {
+      const r = people.get(w.riderId);
+      if (r) html += copyBlock(`${r.name}: still waiting for a seat`, T.waitlisted(sunday, r), r.phone || "");
+    }
+  } else {
+    html += banner("info", "Approve the plan to see each rider's and driver's message.");
+  }
+  html += `<article class="card"><strong>Last-minute: ask drivers for help</strong>
+    <form data-form="broadcast" class="stack"><label class="field">Rider's first name<input name="who" required></label>
+    <label class="field">Neighbourhood<input name="where"></label><button class="btn primary" type="submit">Write message</button></form>
+    ${S.broadcast ? `<pre class="msg">${esc(S.broadcast)}</pre>${btn("Copy", "copy", { text: S.broadcast }, "primary")}` : ""}</article>`;
+  return html;
+}
+
+export function leaderView(S) {
+  const openAlerts = S.data.alerts.filter((a) => !a.resolved).length;
+  const tabs = [["plan", "Plan"], ["people", "People"], ["alerts", `Alerts${openAlerts ? ` (${openAlerts})` : ""}`], ["texts", "Texts"]];
+  const body = { plan: planTab, people: peopleTab, alerts: alertsTab, texts: textsTab }[S.tab] || planTab;
+  return `<nav class="tabs">${tabs.map(([k, l]) => `<button type="button" class="${S.tab === k ? "on" : ""}" data-act="tab" data-tab="${k}">${esc(l)}</button>`).join("")}</nav>${body(S)}`;
+}
+
+export function tabsFor(S, tabs) {
+  return `<nav class="tabs">${tabs.map(([k, l]) => `<button type="button" class="${S.tab === k ? "on" : ""}" data-act="tab" data-tab="${k}">${esc(l)}</button>`).join("")}</nav>`;
+}
+
+export function roleView(S) {
+  if (!S.me) return registerView(S);
+  if (S.me.role === "leader") return leaderView(S);
+  if (S.me.role === "driver") return tabsFor(S, [["sundays", "My Sundays"], ["details", "My details"]]) + driverView(S);
+  return tabsFor(S, [["rides", "Rides"], ["details", "My details"]]) + riderView(S);
+}

@@ -1,0 +1,13 @@
+{
+  "name": "cgc-rides",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Chosen Generation Rides: Sunday ride matching for Chosen Generation Church",
+  "type": "module",
+  "scripts": {
+    "test": "node --test \"tests/*.test.mjs\""
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.2.0"
+  }
+}
