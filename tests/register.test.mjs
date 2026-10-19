@@ -56,15 +56,12 @@ test("demo: the leader can remove a test person and the plan goes back to draft"
   await assert.rejects(() => s.removePerson(victim.id), /Only the transport leader/);
 });
 
-import { inviteDrivers, inviteRiders } from "../js/texts.js";
+import { inviteDrivers } from "../js/texts.js";
 
-test("invitations explain how to join, include the app address and no personal details", () => {
+test("the driver invitation explains how to join, includes the app address and no personal details", () => {
   const d = inviteDrivers("https://example.org/rides/");
   assert.match(d, /https:\/\/example\.org\/rides\//);
   assert.match(d, /I can give rides/);
   assert.match(d, /approve you before you're given any riders/);
-  const r = inviteRiders("https://example.org/rides/");
-  assert.match(r, /I need a ride to church/);
-  assert.match(r, /11:45/);
-  assert.ok(!/\d{3}-\d{3}-\d{4}/.test(d + r));
+  assert.ok(!/\d{3}-\d{3}-\d{4}/.test(d));
 });

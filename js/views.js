@@ -368,9 +368,8 @@ function textsTab(S) {
   const url = S.appUrl || "";
   let html = `<div class="chips">${chips}</div>
     <p class="small muted">Nothing is sent from here. Copy a message and paste it into the group chat or a text. Group messages never include addresses. The driver messages below do, so send each one to that driver only. Only text people who agreed to texts.</p>`;
-  html += `<h3>Invitations</h3>`;
-  html += copyBlock("Invite people with a car to join the team", T.inviteDrivers(url), "For the church group chat or one-to-one. Has no personal details. New drivers are approved by you before they get riders.");
-  html += copyBlock("Invite people who need rides", T.inviteRiders(url), "For the church group chat or one-to-one. Has no personal details.");
+  html += `<h3>Invitation</h3>`;
+  html += copyBlock("Invite people with a car to join the driving team", T.inviteDrivers(url), "For the church group chat or one-to-one. Has no personal details. New drivers are approved by you before they get riders.");
   html += `<h3>Every week</h3>`;
   html += copyBlock("Weekly check-in (Thursday, to the group)", T.weeklyCheckin(sunday, url), "Opt-in riders only. Silence means no ride.");
   html += copyBlock("Saturday reminder (to the group)", T.reminder(sunday));
