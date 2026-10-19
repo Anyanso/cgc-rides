@@ -68,7 +68,7 @@ Things to watch: pickup times vs reality (adjust `stopMin` and `maxDetourMin`), 
 
 ## What is and isn't verified
 
-`npm install && npm test` runs 57 tests: the matching engine (rules, second trips, waitlist, 150 riders), the privacy and safety rules **in a real Postgres** (PGlite), the demo store, every screen rendered for every role, and request building/parsing for routing and address lookup.
+`npm install && npm test` runs 58 tests: the matching engine (rules, second trips, waitlist, 150 riders), the privacy and safety rules **in a real Postgres** (PGlite), the demo store, every screen rendered for every role, and request building/parsing for routing and address lookup.
 
 **Not tested from the build environment** (no outside network there): the real Supabase project and email sign-in, and the real OpenStreetMap routing and address services. Do the first live run yourself with the test plan above.
 

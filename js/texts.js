@@ -10,6 +10,30 @@ const church = () => CONFIG.churchName;
 const service = () => CONFIG.service.time;
 const svcLabel = () => fmtMin(toMin(service()));
 
+/** Invitation for people with a car to join the driving team. Safe for a group chat (no personal details). */
+export function inviteDrivers(appUrl = "") {
+  return `Hello from ${church()}! We run a ride team so that everyone who needs a lift can get to our ${svcLabel()} Sunday service. Do you have a car and a few free seats? We'd love you to join the driving team.
+
+How to join:
+1. Open ${appUrl || "the ride app"}
+2. Sign in with your email (we send you a short code or link, no password)
+3. Choose "I can give rides" and fill in the short form
+
+The transport leader will check your details and approve you before you're given any riders. You can choose which Sundays you drive, and you can always tell us when you can't make it. Thank you for serving!`;
+}
+
+/** Invitation for people who need rides. Safe for a group chat. */
+export function inviteRiders(appUrl = "") {
+  return `Hello from ${church()}! Need a ride to our ${svcLabel()} Sunday service? Our ride team can match you with a driver each week.
+
+How to sign up:
+1. Open ${appUrl || "the ride app"}
+2. Sign in with your email (we send you a short code or link, no password)
+3. Choose "I need a ride to church" and fill in the short form
+
+Each week you tell us if you need a ride (and how many people are coming with you), and we'll message you your pickup time. Questions? Reply to the transport leader.`;
+}
+
 export function weeklyCheckin(sunday, appUrl = "") {
   return `Good day from ${church()}. Do you need a ride this Sunday (${fmtDate(sunday)})? Please tell us in the app by Saturday 12:00 noon, and how many people are coming with you${appUrl ? `: ${appUrl}` : ""}. If we don't hear from you, we won't arrange a ride.`;
 }
