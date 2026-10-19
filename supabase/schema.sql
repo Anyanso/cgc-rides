@@ -10,9 +10,10 @@
 --     riders' pickup details, and a rider gets their driver's name and phone, only through
 --     the functions below (my_route, my_rides), and only after the leader has approved the plan.
 --   * Nobody can make themselves a leader, clear themselves as a driver, or edit their own
---     police-check dates (the protect_profile trigger undoes it).
---   * The plan cannot be saved with an uncleared driver, an expired police check, or more
---     riders than seats.
+--     vetting notes (the protect_profile trigger undoes it).
+--   * The plan cannot be saved with a driver the leader hasn't cleared, or more riders than seats.
+--   * Vetting is the leader's job: a driver gets riders only once the leader sets them to
+--     "cleared". Licence, insurance and police-check dates are optional notes for the leader.
 -- Time zone: Saskatchewan is on Central Standard Time all year (America/Regina).
 
 
@@ -417,11 +418,9 @@ begin
 
   if exists (
     select 1 from assignments a join profiles d on d.id = a.driver_id
-    where a.plan_id = pid
-      and (d.driver_status <> 'cleared' or not d.licence_ok or not d.insurance_ok
-           or d.police_check_expiry is null or d.police_check_expiry < p_sunday)
+    where a.plan_id = pid and d.driver_status <> 'cleared'
   ) then
-    raise exception 'Only cleared drivers with a current police check can be given riders.';
+    raise exception 'Only cleared drivers can be given riders.';
   end if;
 
   if exists (

@@ -25,23 +25,25 @@ test("rider goes to the driver whose route passes them", () => {
   assert.equal(p.waitlist.length, 0);
 });
 
-test("only cleared, available drivers with a current check get riders", () => {
+test("only drivers the leader has cleared (and who are available) get riders", () => {
   const ok = driver("ok", 52.1, -106.63);
   const bad = [
     driver("pending", 52.1332, -106.671, { status: "pending" }),
     driver("suspended", 52.1332, -106.671, { status: "suspended" }),
-    driver("expired", 52.1332, -106.671, { policeCheckExpiry: "2026-10-01" }),
     driver("off", 52.1332, -106.671, { available: false }),
-    driver("nolic", 52.1332, -106.671, { licenceOk: false }),
+    driver("noseats", 52.1332, -106.671, { seats: 0 }),
   ];
+  // Vetting notes are the leader's records only: missing licence/insurance/check dates do not block a cleared driver.
+  const noNotes = driver("notes", 52.0, -106.5, { licenceOk: false, insuranceOk: false, policeCheckExpiry: null });
   const p = run([...bad, ok], [rider("r1", 52.1332, -106.672)]);
   assert.equal(driverOf(p, "r1"), "ok");
-  assert.equal(p.excludedDrivers.length, 5);
-  assert.match(driverIssue(bad[2], DATE), /expired/);
+  assert.equal(p.excludedDrivers.length, 4);
+  assert.equal(driverIssue(noNotes, DATE), null);
+  assert.match(driverIssue(bad[0], DATE), /Not cleared/);
 });
 
-test("under-18 rider is only placed with a driver whose check is current", () => {
-  const expired = driver("expired", 52.1332, -106.671, { policeCheckExpiry: "2026-10-01" });
+test("under-18 rider is only placed with a driver the leader has cleared", () => {
+  const expired = driver("expired", 52.1332, -106.671, { status: "pending" });
   const good = driver("good", 52.05, -106.6);
   const minor = rider("kid", 52.1331, -106.6705, { minor: true });
   const p = run([expired, good], [minor]);

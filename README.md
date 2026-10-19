@@ -12,7 +12,7 @@ Sunday rides to **Chosen Generation Church** (Saskatoon). Riders ask for a lift,
 |---|---|
 | **Rider** | Ask for any of the next 4 Sundays (optionally "ride home too"); opt in to a weekly check-in; see driver name, phone, car, pickup time and "be ready by" time once approved; "I can't make it" |
 | **Driver** | Set seats, every-week or week-by-week availability, second trip; see an ordered pickup list with addresses, notes and a Google Maps route; "I can't make it" |
-| **Leader** | See requests vs seats; draft the plan; move people by hand; approve; review driver checks (licence, insurance, police check expiry); add riders who phoned in; reassign in one click when a driver cancels; copy ready-made texts |
+| **Leader** | See requests vs seats; draft the plan; move people by hand; approve; approve and clear drivers (you do the vetting); add riders who phoned in; reassign in one click when a driver cancels; copy ready-made texts |
 
 **Matching.** Each rider goes to the car where they add the fewest minutes on the way to church (real road times from OpenStreetMap routing, straight-line estimate if that's unreachable). Priority riders go first. Seats are the real limit, so drivers can offer a second trip, and anyone left goes on a waiting list **with the reason written out**.
 
@@ -22,8 +22,8 @@ Sunday rides to **Chosen Generation Church** (Saskatoon). Riders ask for a lift,
 
 ## Safety and privacy (enforced by the database, `supabase/schema.sql`)
 
-- Only drivers who are **cleared** (licence, insurance, police / vulnerable-sector check **not expired**) can be given riders. The database refuses to save a plan otherwise.
-- **Under-18** riders go only with a driver who has a current check; a guardian's phone is required.
+- **Vetting is done by the transport leader**, outside the app (licence, insurance, police check, whatever the church requires). A new driver is "pending" and gets no riders until you set them to **cleared** under People → Edit. The database refuses to save a plan with an uncleared driver. Licence, insurance and check-date fields are optional notes for your own records and don't block anyone.
+- **Under-18** riders go only with a driver you've cleared; a guardian's phone is required.
 - **Same-gender** requests are honoured by the draft. The leader can override by hand and is warned.
 - A rider's address and phone are visible only to the **leader and their assigned driver**, and only after approval. Riders see their driver's name, phone and car, not the driver's home address.
 - Nobody can make themselves a leader, clear themselves as a driver, or edit their own check dates.
@@ -55,7 +55,7 @@ Locally: `python3 -m http.server` in this folder, then open http://localhost:800
 
 ## Three-Sunday test plan
 
-1. **Sunday 1:** 2 drivers and 3 to 4 riders you know. Clear the drivers (People → Edit: confirm licence and insurance, set the check expiry date, status *cleared*). Run the whole weekly rhythm. Check every pickup time against a real drive.
+1. **Sunday 1:** 2 drivers and 3 to 4 riders you know. Clear the drivers once you've vetted them (People → Edit → status *cleared*). Run the whole weekly rhythm. Check every pickup time against a real drive.
 2. **Sunday 2:** all drivers. Practise a driver tapping "I can't make it" and the leader pressing Reassign.
 3. **Sunday 3:** the regular riders, with weekly check-in on.
 

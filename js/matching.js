@@ -48,16 +48,16 @@ export function pointsFor({ church, drivers, riders }) {
   return pts;
 }
 
-/** Is the driver's police / vulnerable-sector check valid on this Sunday? */
-export const checkCurrent = (d, sundayISO) => !!d.policeCheckExpiry && d.policeCheckExpiry >= sundayISO;
+/**
+ * Vetting is done by the transport leader (licence, insurance, police check, anything else
+ * the church requires). The app's only rule is the leader's decision: status "cleared".
+ * Licence / insurance / check-expiry fields are optional notes for the leader's own records.
+ */
+export const isVetted = (d) => d.status === "cleared";
 
 /** Why a driver can't carry anyone this Sunday (null = fine). */
 export function driverIssue(d, sundayISO) {
   if (d.status !== "cleared") return d.status === "suspended" ? "Suspended" : "Not cleared yet";
-  if (!d.licenceOk) return "Licence not confirmed";
-  if (!d.insuranceOk) return "Insurance not confirmed";
-  if (!d.policeCheckExpiry) return "No police check on file";
-  if (!checkCurrent(d, sundayISO)) return "Police check has expired";
   if (!d.available) return "Not available this Sunday";
   if (!(d.seats > 0)) return "No seats offered";
   if (!hasLoc(d)) return "Home address not located";
@@ -66,7 +66,7 @@ export function driverIssue(d, sundayISO) {
 
 /** Rule clash between one driver and one rider (null = fine). */
 export function pairIssue(d, r, sundayISO) {
-  if (r.minor && !checkCurrent(d, sundayISO)) return "minor_check";
+  if (r.minor && !isVetted(d)) return "minor_check";
   if (r.prefersSameGender && (!r.gender || d.gender !== r.gender)) return "gender";
   return null;
 }

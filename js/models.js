@@ -1,7 +1,5 @@
 // Shared shapes and rules used by both the demo store and the live store.
 
-import { driverIssue } from "./matching.js";
-
 // camelCase (used in the app) <-> snake_case (used in the database)
 const MAP = {
   name: "full_name", address: "home_address", status: "driver_status",
@@ -43,10 +41,7 @@ export function validatePlan({ profilesById, sunday, assignments }) {
   for (const a of assignments) {
     const d = profilesById.get(a.driverId);
     if (!d) throw new Error("Unknown driver in plan.");
-    const issue = driverIssue({ ...d, available: true }, sunday);
-    if (issue && issue !== "Not available this Sunday") {
-      throw new Error("Only cleared drivers with a current police check can be given riders.");
-    }
+    if (d.status !== "cleared") throw new Error("Only cleared drivers can be given riders.");
     const key = `${a.driverId}|${a.trip || 1}`;
     per.set(key, (per.get(key) || 0) + 1);
   }
@@ -58,7 +53,7 @@ export function validatePlan({ profilesById, sunday, assignments }) {
 
 export const DRIVER_STATUS_TEXT = {
   none: "Not a driver",
-  pending: "Waiting for the leader to check your licence, insurance and police check",
+  pending: "Waiting for the transport leader to approve you as a driver",
   cleared: "Cleared to drive",
   suspended: "Paused by the leader",
 };

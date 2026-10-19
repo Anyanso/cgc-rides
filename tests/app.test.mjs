@@ -24,10 +24,10 @@ test("demo: draft plan seats cleared drivers only, honours rules, and shows a wa
   const c = await leaderCtx();
   const p = await plan(c);
   const byId = new Map(c.data.profiles.map((x) => [x.id, x]));
-  assert.ok(!p.assignments.some((a) => ["d-esther", "d-new"].includes(a.driverId)), "expired/pending drivers must get nobody");
+  assert.ok(!p.assignments.some((a) => ["d-esther", "d-new"].includes(a.driverId)), "suspended/pending drivers must get nobody");
   assert.ok(p.excludedDrivers.length >= 2);
   const tobi = p.assignments.find((a) => a.riderId === "r-tobi");
-  assert.ok(tobi && byId.get(tobi.driverId).policeCheckExpiry >= c.sunday);
+  assert.ok(tobi && byId.get(tobi.driverId).status === "cleared");
   const amara = p.assignments.find((a) => a.riderId === "r-amara");
   assert.equal(byId.get(amara.driverId).gender, "F");
   assert.equal(p.waitlist.find((w) => w.riderId === "r-isaac")?.reason.match(/locate/) != null, true);

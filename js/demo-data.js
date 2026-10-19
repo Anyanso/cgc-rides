@@ -39,7 +39,7 @@ export function makeDemoState(now = new Date()) {
     driver("d-daniel", "Daniel Okafor", "Evergreen", { gender: "M", seats: 3, drivesEveryWeek: true, vehicle: "Grey SUV" }),
     driver("d-ruth", "Ruth Mensah", "Confederation Park", { gender: "F", seats: 3, secondTrip: true, vehicle: "Blue sedan" }),
     driver("d-samuel", "Samuel Boateng", "Lawson Heights", { gender: "M", seats: 2, drivesEveryWeek: true, vehicle: "Red hatchback", policeCheckExpiry: inDays(12) }),
-    driver("d-esther", "Esther Williams", "Nutana", { gender: "F", seats: 3, vehicle: "White van", policeCheckExpiry: inDays(-20) }), // expired: gets no riders
+    driver("d-esther", "Esther Williams", "Nutana", { gender: "F", seats: 3, vehicle: "White van", status: "suspended" }), // paused by the leader: gets no riders
     base("d-new", "Joel Anderson", "Briarwood", { role: "driver", status: "pending", gender: "M", seats: 4, vehicle: "Black truck (crew cab)" }),
     base("r-mary", "Mary Johnson", "Evergreen", { gender: "F", priority: true, weeklyCheckin: true, notes: "Uses a walker (folds into the trunk)", textsConsentAt: now.toISOString() }),
     base("r-peter", "Peter Nkosi", "Brighton", { gender: "M", weeklyCheckin: true }),

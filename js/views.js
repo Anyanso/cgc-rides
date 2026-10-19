@@ -98,13 +98,13 @@ export function profileForm(S, p = {}, { leaderEditing = false, registering = fa
       <label class="field">Vehicle (so riders can spot you)<input name="vehicle" value="${esc(p.vehicle || "")}" placeholder="e.g. Grey SUV"></label>
       ${chk("drivesEveryWeek", p.drivesEveryWeek, "I drive <strong>every</strong> Sunday unless I say otherwise")}
       ${chk("secondTrip", p.secondTrip, "I can do a <strong>second trip</strong> if there are more riders than seats")}
-      <p class="small muted">The transport leader confirms your licence, insurance and police / vulnerable-sector check before you are given riders.</p>
+      <p class="small muted">The transport leader will vet you and approve you before you are given riders.</p>
     </fieldset>` : "";
   const leaderBits = leaderEditing ? `<fieldset class="field"><legend>Leader only</legend>
       ${chk("priority", p.priority, "Priority rider (seated first)")}
       ${isDriver ? `<label class="field">Driver status<select name="status">${["pending", "cleared", "suspended"].map((s) => `<option ${p.status === s ? "selected" : ""}>${s}</option>`).join("")}</select></label>
-      ${chk("licenceOk", p.licenceOk, "Licence confirmed")}${chk("insuranceOk", p.insuranceOk, "Insurance confirmed")}
-      <label class="field">Police / vulnerable-sector check expires<input name="policeCheckExpiry" type="date" value="${esc(p.policeCheckExpiry || "")}"></label>` : ""}
+      <p class="small muted">Set the status to <strong>cleared</strong> once you have vetted this driver. The records below are optional notes for you.</p>${chk("licenceOk", p.licenceOk, "Licence seen (optional note)")}${chk("insuranceOk", p.insuranceOk, "Insurance seen (optional note)")}
+      <label class="field">Police check expiry (optional note)<input name="policeCheckExpiry" type="date" value="${esc(p.policeCheckExpiry || "")}"></label>` : ""}
       ${addingForSunday ? chk("needsRide", true, `Needs a ride on ${esc(fmtDate(addingForSunday))}`) + chk("consentByPhone", false, "They agreed by phone to receive ride texts") : ""}
     </fieldset>` : "";
   return `<form data-form="profile" class="stack" ${p.id ? `data-id="${esc(p.id)}"` : ""}>
@@ -118,7 +118,7 @@ export function profileForm(S, p = {}, { leaderEditing = false, registering = fa
     ${chk("minor", p.minor, "This rider is under 18")}
     <div class="field minorbits"><label class="field">Parent / guardian name<input name="guardianName" value="${esc(p.guardianName || "")}"></label>
       <label class="field">Parent / guardian phone<input name="guardianPhone" type="tel" value="${esc(p.guardianPhone || "")}"></label>
-      <p class="small muted">Riders under 18 are only placed with a driver who has a current police check. Required if under 18.</p></div>
+      <p class="small muted">Riders under 18 are only placed with a driver the leader has cleared. Required if under 18.</p></div>
     <label class="field">Anything the driver should know (optional)<input name="notes" value="${esc(p.notes || "")}" placeholder="e.g. uses a walker"></label>
     ${driverBits}${leaderBits}
     <div class="row"><button class="btn primary" type="submit">Save</button>${leaderEditing || registering ? "" : ""}${leaderEditing ? btn("Cancel", "edit-cancel") : ""}</div>
@@ -192,11 +192,8 @@ function mapsLink(S, stops) {
 export function driverView(S) {
   const me = S.me;
   if (S.tab === "details") return `<section class="card"><h2>My details</h2>${profileForm(S, me)}</section>`;
-  const left = daysLeft(me.policeCheckExpiry, S.todayISO);
   const status = me.status === "cleared"
-    ? (left != null && left < 0 ? banner("err", "Your police check has expired. You won't be given riders until the leader updates it.")
-      : left != null && left <= 30 ? banner("warn", `Your police check expires in ${left} day(s). Please renew it so you can keep driving.`)
-      : banner("ok", `Cleared to drive${me.policeCheckExpiry ? ` · police check valid to ${esc(fmtDate(me.policeCheckExpiry, { month: "short", day: "numeric", year: "numeric" }))}` : ""}.`))
+    ? banner("ok", "Cleared to drive.")
     : banner(me.status === "suspended" ? "err" : "warn", esc(DRIVER_STATUS_TEXT[me.status] || DRIVER_STATUS_TEXT.pending) + ".");
   const cards = S.sundays.map((sunday) => {
     const avail = driverAvailable(me, S.weeks, sunday);
@@ -315,8 +312,9 @@ function peopleTab(S) {
   const riders = S.data.profiles.filter((p) => p.role === "rider");
   const dRow = (d) => {
     const left = daysLeft(d.policeCheckExpiry, S.todayISO);
-    const st = d.status === "cleared" ? (left != null && left < 0 ? badge("Check expired", "red") : badge("Cleared", "ok")) : badge(d.status, d.status === "pending" ? "clay" : "red");
-    return `<li class="personrow"><div><strong>${esc(d.name)}</strong> ${st}<br><span class="small muted">${esc(d.seats)} seats · ${esc(d.neighbourhood || "no area")} · check ${d.policeCheckExpiry ? `to ${esc(d.policeCheckExpiry)}${left != null && left >= 0 && left <= 30 ? ` (${left}d left)` : ""}` : "not on file"} · licence ${d.licenceOk ? "✓" : "✗"} · insurance ${d.insuranceOk ? "✓" : "✗"}</span></div>${btn("Edit / review", "edit", { id: d.id })}</li>`;
+    const st = d.status === "cleared" ? badge("Cleared", "ok") : badge(d.status === "pending" ? "Needs your approval" : d.status, d.status === "pending" ? "clay" : "red");
+    const checkNote = d.policeCheckExpiry ? `check ${left != null && left < 0 ? "EXPIRED " : "to "}${esc(d.policeCheckExpiry)}` : "no check date noted";
+    return `<li class="personrow"><div><strong>${esc(d.name)}</strong> ${st}<br><span class="small muted">${esc(d.seats)} seats · ${esc(d.neighbourhood || "no area")} · ${checkNote} · licence ${d.licenceOk ? "✓" : "–"} · insurance ${d.insuranceOk ? "✓" : "–"}</span></div>${btn("Edit / review", "edit", { id: d.id })}</li>`;
   };
   const rRow = (r) => `<li class="personrow"><div><strong>${esc(r.name)}</strong> ${riderBadges(r)}<br><span class="small muted">${esc(r.neighbourhood || "")} · ${r.textsConsentAt ? "texts OK" : "no text consent"}${r.weeklyCheckin ? " · weekly check-in" : ""}</span></div>${btn("Edit", "edit", { id: r.id })}</li>`;
   return `<div class="row wrap">${btn("Add a rider who phoned in", "edit", { id: "new" }, "primary")}</div>
