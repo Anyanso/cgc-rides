@@ -108,6 +108,21 @@ export async function createLiveStore(config, { createClient } = {}) {
     async cantMakeIt(sunday, note = null) { return rpc("driver_cant_make_it", { p_sunday: sunday, p_note: note }); },
 
     // ---- leader
+    /** Every row of every table, for the leader's backup. Pages through results (1000 per request). */
+    async exportAll() {
+      const out = {};
+      for (const t of ["profiles", "consent_log", "driver_weeks", "ride_requests", "plans", "assignments", "waitlist", "alerts"]) {
+        const rows = [];
+        for (let from = 0; ; from += 1000) {
+          const res = await sb.from(t).select("*").range(from, from + 999);
+          fail(res);
+          rows.push(...res.data);
+          if (res.data.length < 1000) break;
+        }
+        out[t] = rows;
+      }
+      return out;
+    },
     async leaderData() {
       const since = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
       const [pr, rq, wk, pl, as, wl, al, cl] = await Promise.all([

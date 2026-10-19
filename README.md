@@ -68,7 +68,7 @@ Things to watch: pickup times vs reality (adjust `stopMin` and `maxDetourMin`), 
 
 ## What is and isn't verified
 
-`npm install && npm test` runs 49 tests: the matching engine (rules, second trips, waitlist, 150 riders), the privacy and safety rules **in a real Postgres** (PGlite), the demo store, every screen rendered for every role, and request building/parsing for routing and address lookup.
+`npm install && npm test` runs 54 tests: the matching engine (rules, second trips, waitlist, 150 riders), the privacy and safety rules **in a real Postgres** (PGlite), the demo store, every screen rendered for every role, and request building/parsing for routing and address lookup.
 
 **Not tested from the build environment** (no outside network there): the real Supabase project and email sign-in, and the real OpenStreetMap routing and address services. Do the first live run yourself with the test plan above.
 
@@ -89,3 +89,8 @@ Automatic texting (Twilio), rides home with a different driver, a church van as 
 ## Looking at every role without touching real data
 
 Add `?demo` to the site address (for example `https://anyanso.github.io/cgc-rides/?demo`) to open the sample-data demo. It uses fictional people, saves nothing, and lets you view the app as the leader, a driver or a rider.
+
+## Keeping a copy and keeping Supabase awake
+
+- **People tab → Keep a copy:** "Download people list" gives a spreadsheet (CSV); "Download full backup" gives a JSON file of every table. Both contain addresses and phone numbers, so keep them private. Do this about once a month and before big changes.
+- **Keep-alive:** `.github/workflows/keepalive.yml` pings the database once a day so the free project never pauses. GitHub turns scheduled jobs off after 60 days with no repository changes; if you get that email, open the repository's **Actions** tab and click **Enable workflow**. You can also run it by hand from there (**Run workflow**).

@@ -339,7 +339,10 @@ function peopleTab(S) {
   const rRow = (r) => `<li class="personrow"><div><strong>${esc(r.name)}</strong> ${riderBadges(r)}<br><span class="small muted">${esc(r.neighbourhood || "")} · ${r.textsConsentAt ? "texts OK" : "no text consent"}${r.weeklyCheckin ? " · weekly check-in" : ""}</span></div>${btn("Edit", "edit", { id: r.id })}</li>`;
   return `<div class="row wrap">${btn("Add a rider who phoned in", "edit", { id: "new" }, "primary")}</div>
     <h3>Drivers (${drivers.length})</h3><ul class="plain">${drivers.map(dRow).join("") || "<li class='muted'>No drivers yet.</li>"}</ul>
-    <h3>Riders (${riders.length})</h3><ul class="plain">${riders.map(rRow).join("") || "<li class='muted'>No riders yet.</li>"}</ul>`;
+    <h3>Riders (${riders.length})</h3><ul class="plain">${riders.map(rRow).join("") || "<li class='muted'>No riders yet.</li>"}</ul>
+    <h3>Keep a copy</h3>
+    <article class="card"><p class="small muted">Save a copy of your people and plans in case anything is ever lost. The files contain addresses and phone numbers, so keep them private (for example in your own Google Drive, not shared).</p>
+    <div class="row wrap">${btn("Download people list (spreadsheet)", "export-people", {}, "primary")}${btn("Download full backup", "export-backup")}</div></article>`;
 }
 
 function alertsTab(S) {

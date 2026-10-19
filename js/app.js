@@ -3,6 +3,7 @@
 
 import { CONFIG, IS_DEMO } from "./config.js";
 import { createDemoStore } from "./store-demo.js";
+import { peopleCsv, backupJson, stamp, download } from "./backup.js";
 import { toISO, fmtDate } from "./dates.js";
 import { geocode } from "./geo.js";
 import { driverIssue } from "./matching.js";
@@ -159,6 +160,8 @@ const actions = {
   "demo-start"() { S.screen = "picker"; },
   "goto-signin"() { S.screen = "signin"; },
   "reg-back"() { S.regRole = null; },
+  async "export-people"() { download(`cgc-rides-people-${stamp()}.csv`, "text/csv", peopleCsv(S.data.profiles || [])); say("People list downloaded. Keep it private."); },
+  async "export-backup"() { const t = await store.exportAll(); download(`cgc-rides-backup-${stamp()}.json`, "application/json", backupJson(t)); say("Backup downloaded. Keep it private."); },
   "reg-role"(d) { S.regRole = d.role === "driver" ? "driver" : "rider"; },
   "signin-reset"() { S.signInSent = ""; },
   async viewas(d) { store.viewAs(d.id); S.session = store.session(); S.tab = null; S.sunday = null; S.planView = null; S.editing = null; await reload(); say(`Viewing as ${S.me?.name}`); },
