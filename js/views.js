@@ -88,11 +88,11 @@ export function demoPickerView(S) {
 export function profileForm(S, p = {}, { leaderEditing = false, registering = false, addingForSunday = null } = {}) {
   const isDriver = p.role === "driver";
   const hoods = NEIGHBOURHOODS.map((n) => `<option ${p.neighbourhood === n.name ? "selected" : ""}>${esc(n.name)}</option>`).join("");
-  const chk = (name, on, label) => `<label class="check"><input type="checkbox" name="${name}" ${on ? "checked" : ""}> ${label}</label>`;
+  const chk = (name, on, label) => `<label class="check"><input type="checkbox" name="${name}" ${on ? "checked" : ""}> <span>${label}</span></label>`;
   const roleChoice = registering
     ? `<fieldset class="field"><legend>I want to…</legend>
-        <label class="check"><input type="radio" name="role" value="rider" ${isDriver ? "" : "checked"}> Get rides to church</label>
-        <label class="check"><input type="radio" name="role" value="driver" ${isDriver ? "checked" : ""}> Give rides (I have a car)</label></fieldset>`
+        <label class="check"><input type="radio" name="role" value="rider" ${isDriver ? "" : "checked"}> <span>Get rides to church</span></label>
+        <label class="check"><input type="radio" name="role" value="driver" ${isDriver ? "checked" : ""}> <span>Give rides (I have a car)</span></label></fieldset>`
     : `<input type="hidden" name="role" value="${esc(p.role || "rider")}">`;
   const driverBits = (isDriver || registering) ? `<fieldset class="field driverbits"><legend>If you drive</legend>
       <label class="field">Seats free for passengers (not counting you)<input name="seats" type="number" min="0" max="14" value="${esc(p.seats ?? 3)}"></label>
@@ -146,7 +146,7 @@ export function riderView(S) {
             <label class="field">How many people are coming with you? <span class="small muted">(not counting you; each needs a seat)</span>
               <input name="extraPeople" type="number" inputmode="numeric" min="0" max="10" value="0"></label>
             <label class="check"><input type="checkbox" name="canSplit"> <span>It's OK to split us across different cars if no single car has room for everyone</span></label>
-            <label class="check"><input type="checkbox" name="rideHome"> I need a ride home too</label>
+            <label class="check"><input type="checkbox" name="rideHome"> <span>I need a ride home too</span></label>
             <label class="field">Note for the leader (optional)<input name="note" placeholder="e.g. bringing a small child"></label>
             <button class="btn primary" type="submit">${again ? "Ask again" : "I need a ride"}</button></form>`;
   const cards = S.sundays.map((sunday) => {
