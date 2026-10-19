@@ -62,6 +62,6 @@ test("the driver invitation explains how to join, includes the app address and n
   const d = inviteDrivers("https://example.org/rides/");
   assert.match(d, /https:\/\/example\.org\/rides\//);
   assert.match(d, /I can give rides/);
-  assert.match(d, /approve you before you're given any riders/);
+  assert.match(d, /approve you before you're given anyone to pick up/);
   assert.ok(!/\d{3}-\d{3}-\d{4}/.test(d));
 });

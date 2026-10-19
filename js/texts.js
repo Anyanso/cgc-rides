@@ -12,14 +12,25 @@ const svcLabel = () => fmtMin(toMin(service()));
 
 /** Invitation for people with a car to join the driving team. Safe for a group chat (no personal details). */
 export function inviteDrivers(appUrl = "") {
-  return `Hello from ${church()}! We run a ride team so that everyone who needs a lift can get to our ${svcLabel()} Sunday service. Do you have a car and a few free seats? We'd love you to join the driving team.
+  return `Hello from ${church()}! \u{1F49B}
 
-How to join:
+Every Sunday, there are people in our church family who would love to worship with us but have no way to get there.
+
+A simple ride from you can mean the world to them. It could be the difference between sitting at home and being in the house of God with their church family.
+
+If you have a car and even one or two free seats, we would be so grateful to have you on our driving team.
+
+This is a real way to serve, and no one here is a stranger for long. You'll get to know the people you drive, and they'll get to know you.
+
+Joining takes about two minutes:
+
 1. Open ${appUrl || "the ride app"}
-2. Sign in with your email (we send you a short code or link, no password)
+2. Sign in with your email. We'll send you a short code, and there's no password to remember
 3. Choose "I can give rides" and fill in the short form
 
-The transport leader will check your details and approve you before you're given any riders. You can choose which Sundays you drive, and you can always tell us when you can't make it. Thank you for serving!`;
+Our transport leader will look over your details and approve you before you're given anyone to pick up. You decide which Sundays you drive, and you're always free to tell us when you can't. There's no pressure, and every ride counts.
+
+Thank you for having a heart to serve. We can't wait to have you on the team!`;
 }
 
 export function weeklyCheckin(sunday, appUrl = "") {
