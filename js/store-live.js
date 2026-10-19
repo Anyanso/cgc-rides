@@ -45,7 +45,7 @@ export async function createLiveStore(config, { createClient } = {}) {
     session() { return user ? { userId: user.id, email: user.email } : null; },
     async signIn(email) {
       const res = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: typeof location !== "undefined" ? location.href.split("#")[0].split("?")[0] : undefined } });
-      if (res.error && /rate limit|too many|seconds/i.test(res.error.message || "")) throw new Error("Too many sign-in emails were requested just now. Wait a few minutes and try again, and check your inbox and spam for the last link we sent.");
+      if (res.error && /rate limit|too many|seconds/i.test(res.error.message || "")) throw new Error("Too many sign-in emails were requested just now. Wait a few minutes and try again, and check your inbox and spam for the last link we sent. (Technical detail: " + res.error.message + ")");
       fail(res);
     },
     async signOut() { await sb.auth.signOut(); user = null; cachedMe = undefined; },
