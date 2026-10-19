@@ -25,7 +25,10 @@ export const CONFIG = {
 
   // 2) Leave both empty to run in DEMO mode (sample data, nothing saved to a server).
   //    Paste your Supabase project URL and anon key to go live.
-  supabase: { url: "", anonKey: "" },
+  supabase: {
+    url: "https://gpocgkxmglclvwxiqyrd.supabase.co",
+    anonKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdwb2Nna3htZ2xjbHZ3eGlxeXJkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgxMjY3MDAsImV4cCI6MjEwMzcwMjcwMH0.TCpYFz83C7aUQjFx0fXnBTjKDV0v6rDWuDCfC5TiZe4",
+  },
 
   // Free services used from the browser when live. If they are unreachable the app
   // falls back to straight-line estimates and says so on the leader's screen.
