@@ -10,7 +10,7 @@ export const CONFIG = {
   // 1) Put the church's street address here. The app looks up its coordinates
   //    the first time the leader builds a plan. Until then the leader sees a warning.
   //    (Or fill lat/lng directly if you already know them.)
-  church: { address: "", lat: null, lng: null },
+  church: { address: "601 Eastlake Avenue", lat: null, lng: null },
 
   // One service only for now. Drivers are scheduled to ARRIVE arriveBeforeMin minutes before
   // the service. Each rider's "be ready by" time is worked out from the real route (their
