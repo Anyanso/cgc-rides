@@ -235,6 +235,7 @@ async function onMove(el) {
 async function onSubmit(form) {
   const kind = form.dataset.form;
   if (kind === "signin") { const email = new FormData(form).get("email").toString().trim(); await store.signIn(email); S.signInSent = email; return; }
+  if (kind === "code") { await store.verifyCode(S.signInSent, new FormData(form).get("code").toString().trim()); S.signInSent = ""; S.session = store.session(); await reload(); return; }
   if (kind === "request") { const f = new FormData(form); await store.requestRide(form.dataset.sunday, { rideHome: f.get("rideHome") === "on", note: (f.get("note") || "").toString().trim() || null, extraPeople: Math.max(0, Math.min(10, Number(f.get("extraPeople")) || 0)), canSplit: f.get("canSplit") === "on" }); await reload(); say("Request sent. We'll confirm your driver after requests close."); return; }
   if (kind === "broadcast") { const f = new FormData(form); S.broadcast = lastMinuteBroadcast(S.sunday, f.get("who").toString().trim(), f.get("where").toString().trim()); return; }
   if (kind === "profile") {

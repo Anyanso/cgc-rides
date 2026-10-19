@@ -22,6 +22,7 @@ export function createDemoStore({ now = () => new Date() } = {}) {
     session() { return viewer ? { userId: viewer, email: me().email } : null; },
     people() { return db.profiles.filter((p) => p.id !== "d-new" || true).map((p) => ({ id: p.id, name: p.name, role: p.role, status: p.status })); },
     viewAs(id) { viewer = id; },
+    async verifyCode() { throw new Error("Codes aren't used in the demo."); },
     async signOut() { viewer = null; },
     reset() { db = makeDemoState(now()); },
     sundays() { return db.sundays; },

@@ -126,12 +126,16 @@ test("live store: calls the right tables and functions (fake client; not a real 
     const h = { get(t, k) { if (k === "then") return (res) => res({ data: table === "profiles" ? [] : [], error: null }); return (...a) => { log.push([table, k, ...a]); return new Proxy(q, h); }; } };
     return new Proxy(q, h);
   };
-  const fake = { auth: { getSession: async () => ({ data: { session: { user: { id: "u1", email: "a@b.c" } } } }), onAuthStateChange() {}, signInWithOtp: async (a) => { log.push(["otp", a.email]); return {}; }, signOut: async () => ({}) },
+  const fake = { auth: { getSession: async () => ({ data: { session: { user: { id: "u1", email: "a@b.c" } } } }), onAuthStateChange() {}, signInWithOtp: async (a) => { log.push(["otp", a.email]); return {}; }, verifyOtp: async (a) => { log.push(["verify", a.email, a.token, a.type]); return a.token === "000000" ? { error: { message: "Token has expired or is invalid" } } : { data: { user: { id: "u2", email: a.email } }, error: null }; }, signOut: async () => ({}) },
     from: (t) => chain(t), rpc: async (fn, args) => { log.push(["rpc", fn, args]); return { data: [], error: null }; } };
   const cfg = { ...CONFIG, supabase: { url: "https://x.supabase.co", anonKey: "k" } };
   const s = await createLiveStore(cfg, { createClient: () => fake });
   await s.init();
   assert.equal(s.session().email, "a@b.c");
+  await s.verifyCode("z@y.x", "123 456");
+  assert.deepEqual(log.find((l) => l[0] === "verify"), ["verify", "z@y.x", "123456", "email"]);
+  assert.equal(s.session().email, "z@y.x");
+  await assert.rejects(() => s.verifyCode("z@y.x", "000000"), /didn't work/);
   await s.myRides(); await s.myRoute("2026-10-25"); await s.cantMakeIt("2026-10-25", "sick");
   await s.savePlan("2026-10-25", "draft", {}, [], []); await s.giveConsent("words");
   await s.signIn("a@b.c");

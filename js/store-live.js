@@ -48,6 +48,13 @@ export async function createLiveStore(config, { createClient } = {}) {
       if (res.error && /rate limit|too many|seconds/i.test(res.error.message || "")) throw new Error("Too many sign-in emails were requested just now. Wait a few minutes and try again, and check your inbox and spam for the last link we sent. (Technical detail: " + res.error.message + ")");
       fail(res);
     },
+    /** Signs in with the 6-digit code from the email (an alternative to tapping the link). */
+    async verifyCode(email, code) {
+      const res = await sb.auth.verifyOtp({ email, token: String(code).replace(/\s+/g, ""), type: "email" });
+      if (res.error) throw new Error(/expired|invalid/i.test(res.error.message || "") ? "That code didn't work. It may have expired or been typed wrong. Check the newest email, or go back and ask for a new one." : res.error.message);
+      user = res.data?.user ?? res.data?.session?.user ?? user;
+      cachedMe = undefined;
+    },
     async signOut() { await sb.auth.signOut(); user = null; cachedMe = undefined; },
     sundays() { return nextSundays(config.weeksAhead); },
 
