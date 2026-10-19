@@ -67,7 +67,7 @@ test("a new user cannot make themselves leader or clear themselves as a driver",
 test("setup: more people register; leader clears driver 1", async () => {
   await as("d2", () => db.query("insert into profiles (user_id,full_name,role,seats) values ($1,'Dee Two','driver',2)", [U.d2]));
   await as("r1", () => db.query("insert into profiles (user_id,full_name,phone,home_address,neighbourhood,lat,lng,gender) values ($1,'Rita One','306-555-0101','12 Secret St','Evergreen',52.17,-106.6,'F')", [U.r1]));
-  await as("r2", () => db.query("insert into profiles (user_id,full_name,phone,home_address,minor,guardian_phone) values ($1,'Ray Two','306-555-0102','99 Other Ave',true,'306-555-0199')", [U.r2]));
+  await as("r2", () => db.query("insert into profiles (user_id,full_name,phone,home_address,minor) values ($1,'Ray Two','306-555-0102','99 Other Ave',true)", [U.r2]));
   for (const k of ["d2", "r1", "r2"]) P[k] = (await q("select id from profiles where user_id=$1", [U[k]]))[0].id;
   await as("leader", () => db.query("update profiles set driver_status='cleared', licence_ok=true, insurance_ok=true, police_check_expiry='2030-01-01', seats=3 where id=$1", [P.d1]));
   assert.equal((await q("select driver_status from profiles where id=$1", [P.d1]))[0].driver_status, "cleared");
@@ -122,8 +122,6 @@ test("after approval the driver sees their riders' details and the rider sees th
   assert.equal(route[0].address, "12 Secret St");
   assert.equal(route[0].ride_home, true);
   assert.equal(route[1].minor, true);
-  assert.equal(route[1].guardian_phone, "306-555-0199");
-  assert.equal(route[0].guardian_phone, null);
 
   // A different driver sees none of them.
   assert.equal((await as("d2", () => q("select * from my_route($1)", [SUN]))).length, 0);

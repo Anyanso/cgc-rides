@@ -7,8 +7,7 @@
 //
 // How the draft is made (cheapest insertion):
 //   1. Only cleared, available drivers with a current police check take part.
-//   2. Riders are placed priority first, then the most constrained (under 18, same-gender
-//      request), then the farthest from church first.
+//   2. Riders are placed priority first, then under-18 riders, then the farthest from church first.
 //   3. Each rider goes to the car where they add the fewest minutes to the drive to
 //      church, as long as the car has a free seat and the detour is within limits.
 //   4. Riders left over go on a driver's SECOND trip (only for drivers who offered one,
@@ -67,7 +66,6 @@ export function driverIssue(d, sundayISO) {
 /** Rule clash between one driver and one rider (null = fine). */
 export function pairIssue(d, r, sundayISO) {
   if (r.minor && !isVetted(d)) return "minor_check";
-  if (r.prefersSameGender && (!r.gender || d.gender !== r.gender)) return "gender";
   return null;
 }
 
@@ -170,7 +168,6 @@ export function evaluate({ church, drivers, riders, assignments, travel, date, o
         const r = rById.get(a.riderId);
         if (!hasLoc(r)) warnings.push({ code: "no_location", riderId: r.id, text: `${r.name}: address not located; timing is a guess.` });
         const pi = pairIssue(d, r, date);
-        if (pi === "gender") warnings.push({ code: "gender", riderId: r.id, driverId, text: `${r.name} asked for a same-gender driver; ${d.name} doesn't match.` });
         if (pi === "minor_check") warnings.push({ code: "minor_check", riderId: r.id, driverId, text: `${r.name} is under 18 and ${d.name} has no current police check.` });
         return { id: r.id, rider: r, node: riderNode(r, church), order: a.order };
       });
@@ -304,7 +301,7 @@ export function plan({ church, drivers, riders, travel, date, options, keep = []
     if (!hasLoc(r)) waitlist.push({ riderId: r.id, reason: "We couldn't locate this address. Fix the address, then run the plan again." });
     else located.push(r);
   }
-  const constraint = (r) => (r.minor ? 1 : 0) + (r.prefersSameGender ? 1 : 0);
+  const constraint = (r) => (r.minor ? 1 : 0);
   located.sort(
     (a, b) =>
       (b.priority ? 1 : 0) - (a.priority ? 1 : 0) ||
@@ -334,10 +331,7 @@ export function plan({ church, drivers, riders, travel, date, options, keep = []
       }
       return "full";
     });
-    if (verdicts.every((v) => v === "pair")) {
-      if (r.minor && !r.prefersSameGender) return "Under 18 and no driver with a current police check is available.";
-      return `Asked for a same-gender driver; none is available this Sunday${r.minor ? " (and under 18 needs a checked driver)" : ""}.`;
-    }
+    if (verdicts.every((v) => v === "pair")) return "Under 18 and no cleared driver is available.";
     const rest = verdicts.filter((v) => v !== "pair");
     if (rest.includes("far")) return "Too far out of the way for the drivers who still have seats.";
     if (rest.includes("early")) return `Would need a pickup before ${o.earliestPickup}.`;

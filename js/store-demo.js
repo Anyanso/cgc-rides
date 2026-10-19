@@ -31,8 +31,8 @@ export function createDemoStore({ now = () => new Date() } = {}) {
     async saveMyProfile(patch) {
       need(viewer, "Not signed in");
       const p = me();
-      const allowed = ["name", "phone", "gender", "address", "neighbourhood", "lat", "lng", "geoSource", "minor", "guardianName",
-        "guardianPhone", "prefersSameGender", "weeklyCheckin", "notes", "seats", "drivesEveryWeek", "secondTrip", "vehicle", "role"];
+      const allowed = ["name", "phone", "gender", "address", "neighbourhood", "lat", "lng", "geoSource", "minor",
+        "weeklyCheckin", "notes", "seats", "drivesEveryWeek", "secondTrip", "vehicle", "role"];
       for (const k of allowed) if (k in patch && !(k === "role" && !["rider", "driver"].includes(patch.role))) p[k] = patch[k];
       if (p.role === "driver" && p.status === "none") p.status = "pending";
       return fresh(p);
@@ -104,7 +104,7 @@ export function createDemoStore({ now = () => new Date() } = {}) {
         const q = db.requests.find((x) => x.riderId === r.id && x.sunday === sunday);
         return { trip: a.trip, order: a.order, pickupMin: a.pickupMin, readyByMin: a.readyByMin, arriveMin: a.arriveMin,
           riderName: r.name, riderPhone: r.phone, address: r.address, neighbourhood: r.neighbourhood, lat: r.lat, lng: r.lng,
-          minor: r.minor, guardianName: r.minor ? r.guardianName : null, guardianPhone: r.minor ? r.guardianPhone : null,
+          minor: r.minor,
           riderNotes: r.notes, requestNote: q?.note ?? null, rideHome: !!q?.rideHome, cancelled: q?.status === "cancelled" };
       }).filter((x) => !x.cancelled);
     },

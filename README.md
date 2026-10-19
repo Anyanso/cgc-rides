@@ -23,8 +23,7 @@ Sunday rides to **Chosen Generation Church** (Saskatoon). Riders ask for a lift,
 ## Safety and privacy (enforced by the database, `supabase/schema.sql`)
 
 - **Vetting is done by the transport leader**, outside the app (licence, insurance, police check, whatever the church requires). A new driver is "pending" and gets no riders until you set them to **cleared** under People → Edit. The database refuses to save a plan with an uncleared driver. Licence, insurance and check-date fields are optional notes for your own records and don't block anyone.
-- **Under-18** riders go only with a driver you've cleared; a guardian's phone is required.
-- **Same-gender** requests are honoured by the draft. The leader can override by hand and is warned.
+- **Under-18** riders are marked with a badge and only go with a driver you've cleared. (No guardian details are collected.)
 - A rider's address and phone are visible only to the **leader and their assigned driver**, and only after approval. Riders see their driver's name, phone and car, not the driver's home address.
 - Nobody can make themselves a leader, clear themselves as a driver, or edit their own check dates.
 - **Text consent** is recorded with the date and the exact wording (CASL). The leader can record consent given by phone.

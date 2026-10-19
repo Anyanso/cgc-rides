@@ -23,7 +23,6 @@ function riderBadges(r) {
   return [
     r.priority && badge("Priority", "gold"),
     r.minor && badge("Under 18", "red"),
-    r.prefersSameGender && badge("Same-gender driver", "clay"),
     r.rideHome && badge("Ride home too", "muted"),
     r.geoSource === "neighbourhood" && badge("Location approximate", "muted"),
     ("lat" in r && r.lat == null) && badge("Not on map", "red"),
@@ -113,12 +112,7 @@ export function profileForm(S, p = {}, { leaderEditing = false, registering = fa
     <label class="field">Phone<input name="phone" type="tel" value="${esc(p.phone || "")}" autocomplete="tel"></label>
     <label class="field">Home address (street and number)<input name="address" value="${esc(p.address || "")}" autocomplete="street-address"></label>
     <label class="field">Neighbourhood<select name="neighbourhood"><option value="">Choose…</option>${hoods}</select></label>
-    <label class="field">Gender<select name="gender"><option value="">Prefer not to say</option><option value="F" ${p.gender === "F" ? "selected" : ""}>Female</option><option value="M" ${p.gender === "M" ? "selected" : ""}>Male</option></select></label>
-    ${chk("prefersSameGender", p.prefersSameGender, "I'd like a driver of the same gender")}
     ${chk("minor", p.minor, "This rider is under 18")}
-    <div class="field minorbits"><label class="field">Parent / guardian name<input name="guardianName" value="${esc(p.guardianName || "")}"></label>
-      <label class="field">Parent / guardian phone<input name="guardianPhone" type="tel" value="${esc(p.guardianPhone || "")}"></label>
-      <p class="small muted">Riders under 18 are only placed with a driver the leader has cleared. Required if under 18.</p></div>
     <label class="field">Anything the driver should know (optional)<input name="notes" value="${esc(p.notes || "")}" placeholder="e.g. uses a walker"></label>
     ${driverBits}${leaderBits}
     <div class="row"><button class="btn primary" type="submit">Save</button>${leaderEditing || registering ? "" : ""}${leaderEditing ? btn("Cancel", "edit-cancel") : ""}</div>
@@ -209,7 +203,7 @@ export function driverView(S) {
             <div class="stoptime">${esc(fmtMin(s.pickupMin))}<span class="small muted">ready ${esc(fmtMin(s.readyByMin))}</span></div>
             <div><strong>${esc(s.riderName)}</strong> ${riderBadges({ minor: s.minor, rideHome: s.rideHome })}<br>
             ${esc(s.address || "")}${s.neighbourhood ? ` <span class="muted">· ${esc(s.neighbourhood)}</span>` : ""}<br>
-            ${telLink(s.riderPhone)}${s.minor && s.guardianPhone ? ` · Guardian ${esc(s.guardianName || "")}: ${telLink(s.guardianPhone)}` : ""}
+            ${telLink(s.riderPhone)}
             ${s.riderNotes ? `<br><em>${esc(s.riderNotes)}</em>` : ""}${s.requestNote ? `<br><em>${esc(s.requestNote)}</em>` : ""}</div></li>`).join("")}</ol>
           <p class="small muted">Aim to arrive at church by ${esc(fmtMin(stops[0].arriveMin))}.</p>${mapsLink(S, stops)}</div>`;
       }).join("") + `<p>${btn("I can't make it", "cant-make-it", { sunday }, "danger")}</p>`;

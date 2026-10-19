@@ -116,14 +116,11 @@ function readProfile(form) {
   const has = (n) => form.elements.namedItem(n) != null;
   const text = (n) => (f.get(n) || "").toString().trim() || null;
   const bool = (n) => f.get(n) === "on";
-  const out = { name: text("name"), phone: text("phone"), address: text("address"), neighbourhood: text("neighbourhood"), gender: text("gender"),
-    prefersSameGender: bool("prefersSameGender"), minor: bool("minor"), guardianName: text("guardianName"), guardianPhone: text("guardianPhone"), notes: text("notes") };
+  const out = { name: text("name"), phone: text("phone"), address: text("address"), neighbourhood: text("neighbourhood"), minor: bool("minor"), notes: text("notes") };
   if (has("role")) out.role = text("role");
   if (has("seats")) Object.assign(out, { seats: Number(f.get("seats")) || 0, vehicle: text("vehicle"), drivesEveryWeek: bool("drivesEveryWeek"), secondTrip: bool("secondTrip") });
   if (has("priority")) out.priority = bool("priority");
   if (has("status")) Object.assign(out, { status: text("status"), licenceOk: bool("licenceOk"), insuranceOk: bool("insuranceOk"), policeCheckExpiry: text("policeCheckExpiry") });
-  if (!out.minor) { out.guardianName = null; out.guardianPhone = null; }
-  if (out.minor && !out.guardianPhone) throw new Error("A parent or guardian's phone number is needed for anyone under 18.");
   return out;
 }
 
@@ -277,8 +274,6 @@ root.addEventListener("submit", (e) => {
   e.preventDefault();
   guarded(() => onSubmit(form));
 });
-// Show or hide the guardian fields as the "under 18" box changes.
-root.addEventListener("input", (e) => { if (e.target.name === "minor") e.target.form?.classList.toggle("is-minor", e.target.checked); });
 
 // ---------------------------------------------------------------- start
 

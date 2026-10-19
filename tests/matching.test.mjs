@@ -54,19 +54,6 @@ test("under-18 rider is only placed with a driver the leader has cleared", () =>
   assert.ok(ev.warnings.some((w) => w.code === "minor_check"));
 });
 
-test("a same-gender request is honoured even when a closer driver doesn't match", () => {
-  const closeMan = driver("man", 52.1335, -106.6702, { gender: "M" });
-  const farWoman = driver("woman", 52.1, -106.63, { gender: "F" });
-  const p = run([closeMan, farWoman], [rider("r1", 52.1334, -106.6701, { prefersSameGender: true })]);
-  assert.equal(driverOf(p, "r1"), "woman");
-});
-
-test("same-gender request with no matching driver is waitlisted with a reason", () => {
-  const p = run([driver("man", 52.1, -106.63, { gender: "M" })], [rider("r1", 52.1, -106.63, { prefersSameGender: true })]);
-  assert.equal(p.assignments.length, 0);
-  assert.match(p.waitlist[0].reason, /same-gender/);
-});
-
 test("priority riders are seated first when seats are short", () => {
   const d = driver("d", 52.09, -106.62, { seats: 1 });
   const near = rider("near", 52.09, -106.62);

@@ -34,9 +34,6 @@ create table if not exists profiles (
   geo_source         text check (geo_source in ('address', 'neighbourhood', 'manual', 'none')),
   -- rider details
   minor              boolean not null default false,
-  guardian_name      text,
-  guardian_phone     text,
-  prefers_same_gender boolean not null default false,
   priority           boolean not null default false,          -- leader sets (e.g. seniors, no other way to church)
   weekly_checkin     boolean not null default false,          -- asks each week "Do you need a ride?"; silence = no ride
   notes              text,                                    -- e.g. "uses a walker"
@@ -315,12 +312,12 @@ create or replace function my_route(p_sunday date)
 returns table (trip int, stop_order int, pickup_min int, ready_by_min int, arrive_min int,
                rider_name text, rider_phone text, address text, neighbourhood text,
                lat double precision, lng double precision,
-               minor boolean, guardian_name text, guardian_phone text,
+               minor boolean,
                rider_notes text, request_note text, ride_home boolean)
 language sql stable security definer set search_path = public, pg_temp as $$
   select a.trip, a.stop_order, a.pickup_min, a.ready_by_min, a.arrive_min,
          r.full_name, r.phone, r.home_address, r.neighbourhood, r.lat, r.lng,
-         r.minor, case when r.minor then r.guardian_name end, case when r.minor then r.guardian_phone end,
+         r.minor,
          r.notes, q.note, coalesce(q.ride_home, false)
   from assignments a
   join plans p on p.id = a.plan_id and p.status = 'approved' and p.sunday = p_sunday

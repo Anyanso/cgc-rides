@@ -26,7 +26,7 @@ export async function createLiveStore(config, { createClient } = {}) {
 
   const requestFrom = (r) => ({ id: r.id, riderId: r.rider_id, sunday: r.sunday, rideHome: r.ride_home, note: r.note, status: r.status });
   const rideFrom = (r) => camelRow(r, { sunday: "sunday", status: "status", rideHome: "ride_home", note: "note", driverName: "driver_name", driverPhone: "driver_phone", vehicle: "vehicle", trip: "trip", pickupMin: "pickup_min", readyByMin: "ready_by_min", arriveMin: "arrive_min" });
-  const routeFrom = (r) => camelRow(r, { trip: "trip", order: "stop_order", pickupMin: "pickup_min", readyByMin: "ready_by_min", arriveMin: "arrive_min", riderName: "rider_name", riderPhone: "rider_phone", address: "address", neighbourhood: "neighbourhood", lat: "lat", lng: "lng", minor: "minor", guardianName: "guardian_name", guardianPhone: "guardian_phone", riderNotes: "rider_notes", requestNote: "request_note", rideHome: "ride_home" });
+  const routeFrom = (r) => camelRow(r, { trip: "trip", order: "stop_order", pickupMin: "pickup_min", readyByMin: "ready_by_min", arriveMin: "arrive_min", riderName: "rider_name", riderPhone: "rider_phone", address: "address", neighbourhood: "neighbourhood", lat: "lat", lng: "lng", minor: "minor", riderNotes: "rider_notes", requestNote: "request_note", rideHome: "ride_home" });
 
   return {
     mode: "live",
