@@ -67,9 +67,9 @@ export function landingView(S) {
 
 export function signInView(S) {
   if (S.signInSent) return `<section class="card"><h2>Check your email</h2>
-    <p>We sent a message to <strong>${esc(S.signInSent)}</strong>. Either tap the link in it, or type the 6-digit code from it here. No password needed.</p>
+    <p>We sent a message to <strong>${esc(S.signInSent)}</strong>. Either tap the link in it, or type the code from it here (the number in large print). No password needed.</p>
     <form data-form="code" class="stack">
-      <label class="field">6-digit code<input name="code" type="text" required inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,8}" maxlength="9" placeholder="123456"></label>
+      <label class="field">Code from the email<input name="code" type="text" required inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,10}" maxlength="11" placeholder="12345678"></label>
       <button class="btn primary" type="submit">Sign in with code</button>
     </form>
     <p class="small muted">Nothing arrived? Check spam. Codes and links last about an hour.</p>
