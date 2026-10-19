@@ -158,6 +158,7 @@ const actions = {
   home() { S.screen = "landing"; },
   "demo-start"() { S.screen = "picker"; },
   "goto-signin"() { S.screen = "signin"; },
+  "reg-back"() { S.regRole = null; },
   "reg-role"(d) { S.regRole = d.role === "driver" ? "driver" : "rider"; },
   "signin-reset"() { S.signInSent = ""; },
   async viewas(d) { store.viewAs(d.id); S.session = store.session(); S.tab = null; S.sunday = null; S.planView = null; S.editing = null; await reload(); say(`Viewing as ${S.me?.name}`); },

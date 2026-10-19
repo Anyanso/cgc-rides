@@ -9,6 +9,7 @@ test("after sign-up the person first chooses rider or driver", () => {
   assert.match(h, /I need a ride to church/);
   assert.match(h, /I can give rides/);
   assert.ok(!h.includes('name="seats"'), "no form fields before choosing");
+  assert.match(h, /Step 1 of 2/);
 });
 
 test("riders get the rider form, drivers get the car questions", () => {
@@ -21,4 +22,6 @@ test("riders get the rider form, drivers get the car questions", () => {
   assert.match(driver, /name="seats"/);
   assert.match(driver, /name="vehicle"/);
   assert.ok(!driver.includes("under 18"));
+  assert.match(driver, /Step 2 of 2/);
+  assert.match(driver, /data-act="reg-back"/);
 });
