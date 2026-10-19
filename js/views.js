@@ -363,7 +363,7 @@ function textsTab(S) {
   const chips = S.sundays.map((s) => `<button type="button" class="chip ${s === sunday ? "on" : ""}" data-act="pick-sunday" data-sunday="${esc(s)}">${esc(fmtDate(s))}</button>`).join("");
   const url = S.appUrl || "";
   let html = `<div class="chips">${chips}</div>
-    <p class="small muted">Nothing is sent from here. Copy a message and paste it into the group chat or a text. Group messages never include addresses. Only text people who agreed to texts.</p>`;
+    <p class="small muted">Nothing is sent from here. Copy a message and paste it into the group chat or a text. Group messages never include addresses. The driver messages below do, so send each one to that driver only. Only text people who agreed to texts.</p>`;
   html += copyBlock("Weekly check-in (Thursday, to the group)", T.weeklyCheckin(sunday, url), "Opt-in riders only. Silence means no ride.");
   html += copyBlock("Saturday reminder (to the group)", T.reminder(sunday));
   if (approved) {
@@ -378,7 +378,7 @@ function textsTab(S) {
     const cars = groupCars(asg, S.data.profiles);
     for (const did of [...new Set(cars.map((c) => c.driverId))]) {
       const d = people.get(did);
-      html += copyBlock(d.name, T.driverRoute(sunday, d, cars.filter((c) => c.driverId === did), people), d.phone || "no phone on file");
+      html += copyBlock(d.name, T.driverRoute(sunday, d, cars.filter((c) => c.driverId === did), people, new Map(S.data.requests.filter((q) => q.sunday === sunday).map((q) => [q.riderId, (q.extraPeople || 0) + 1]))), (d.phone || "no phone on file") + ". Send to this driver only. It has addresses and phone numbers.");
     }
     for (const w of plan.waitlist) {
       const r = people.get(w.riderId);

@@ -1,6 +1,6 @@
 // Ready-to-copy text messages. Nothing is sent automatically (that needs a paid service);
 // the leader copies a message and pastes it into the group chat or a text.
-// Group texts never include street addresses.
+// Group texts never include street addresses. The one-to-one driver text does (see CONFIG.texts).
 
 import { CONFIG } from "./config.js";
 import { fmtDate, fmtMin, toMin } from "./dates.js";
@@ -23,16 +23,28 @@ export function waitlisted(sunday, rider) {
   return `Hi ${first(rider.name)}, we're still working on a seat for you on ${fmtDate(sunday)}. The transport leader will message you as soon as we have one. Thank you for your patience.`;
 }
 
-export function driverRoute(sunday, driver, cars, ridersById) {
+export function driverRoute(sunday, driver, cars, ridersById, groupSizes = new Map()) {
+  const details = CONFIG.texts?.includeDetails !== false;
   const lines = [`Hi ${first(driver.name)}, thank you for driving on ${fmtDate(sunday)}.`];
   for (const car of cars) {
     lines.push(cars.length > 1 ? `Trip ${car.trip}:` : "Your pickups:");
     for (const s of car.stops) {
       const r = ridersById.get(s.riderId);
-      lines.push(`${fmtMin(s.pickupMin)}  ${r ? r.name : "Rider"}${r?.neighbourhood ? ` (${r.neighbourhood})` : ""}`);
+      const where = details
+        ? [r?.address, r?.neighbourhood && !String(r?.address || "").includes(r.neighbourhood) ? `(${r.neighbourhood})` : ""].filter(Boolean).join(" ")
+        : (r?.neighbourhood ? `(${r.neighbourhood})` : "");
+      const phone = details && r?.phone ? `, ${r.phone}` : "";
+      lines.push(`${fmtMin(s.pickupMin)}  ${r ? r.name : "Rider"}${where ? `, ${where}` : ""}${phone}`);
+      const total = Math.max(groupSizes.get(s.riderId) || 1, s.seats || 1);
+      const mine = s.seats || 1;
+      if (total > 1) {
+        lines.push(mine >= total
+          ? `    ${total} people in this group, all riding with you.`
+          : `    ${total} people in this group. You're taking ${mine}; the rest go with another driver from the same address. ${first(r?.name)} will sort out who rides with whom.`);
+      }
     }
   }
-  lines.push("Full details with addresses are in the app.");
+  lines.push(details ? "Please keep these details private and don't forward them. The app has them too." : "Full details with addresses are in the app.");
   return lines.join("\n");
 }
 

@@ -21,6 +21,10 @@ export const CONFIG = {
   // Matching limits (minutes). See README "Tuning the matching".
   matching: { stopMin: 3, unloadMin: 2, maxDetourMin: 35, maxRouteMin: 75, earliestPickup: "09:30" },
 
+  // Texts the leader copies to ONE driver include each rider's address and phone, because the
+  // driver is allowed to see them in the app anyway. Set to false to keep addresses out of texts.
+  texts: { includeDetails: true },
+
   weeksAhead: 4,
 
   // 2) Leave both empty to run in DEMO mode (sample data, nothing saved to a server).
