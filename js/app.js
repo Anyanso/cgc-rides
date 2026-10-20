@@ -5,7 +5,7 @@ import { CONFIG, IS_DEMO } from "./config.js";
 import { createDemoStore } from "./store-demo.js";
 import { peopleCsv, backupJson, stamp, download } from "./backup.js";
 import { toISO, fmtDate } from "./dates.js";
-import { confirmAddress, suggestAddresses, normalizePhone, normalizePostal, isConfirmed } from "./geo.js";
+import { confirmAddress, suggestAddresses, refineSuggestions, normalizePhone, normalizePostal, isConfirmed } from "./geo.js";
 import { driverIssue } from "./matching.js";
 import { draftPlan, recompute, applyMove, reassignDriver } from "./planner.js";
 import { driverAvailable, CONSENT_WORDING, isDriver } from "./models.js";
@@ -340,6 +340,25 @@ function setPicked(form, s) {
   field(form, "pickedLat").value = s ? s.lat : "";
   field(form, "pickedLng").value = s ? s.lng : "";
 }
+// Speed: answers are remembered for the visit; the list on screen is narrowed instantly while a
+// fresh search runs; an outdated search is cancelled; the connection is opened on first focus.
+const suggestCache = new Map(); // typed text -> suggestions
+let suggestAbort = null;
+let lastList = [];
+let warmed = false;
+function showSuggestions(box, list, searching) {
+  box._list = list;
+  const rows = list.map((s, i) => `<button type="button" class="suggestion" role="option" data-i="${i}"><strong>${esc(s.address)}</strong><small>${esc([s.neighbourhood, s.postcode, "Saskatoon"].filter(Boolean).join(" · "))}</small></button>`).join("");
+  box.innerHTML = rows + (searching
+    ? `<div class="none searching">Searching…</div>`
+    : list.length ? "" : `<div class="none">No exact match yet. Keep typing the full address with the house number, e.g. 1666 Stonebridge Blvd.</div>`);
+  box.hidden = false;
+}
+root.addEventListener("focusin", (e) => {
+  if (warmed || !(e.target instanceof HTMLInputElement) || e.target.name !== "address") return;
+  warmed = true; // opens the connection now, so the first real search answers faster
+  fetch(`${CONFIG.geocoding.photonUrl}/api/?q=Saskatoon&limit=1`).catch(() => {});
+});
 root.addEventListener("input", (e) => {
   const input = e.target;
   if (!(input instanceof HTMLInputElement) || input.name !== "address" || !input.form?.querySelector(".suggest")) return;
@@ -350,17 +369,20 @@ root.addEventListener("input", (e) => {
   status.innerHTML = '<span class="warn-text">Not confirmed yet.</span> Pick your address from the list, or save and we\'ll check it.';
   clearTimeout(suggestTimer);
   const q = input.value;
+  const key = q.trim().toLowerCase().replace(/\s+/g, " ");
   const seq = ++suggestSeq;
-  if (q.trim().length < 4 || !/\d/.test(q)) { box.hidden = true; box.innerHTML = ""; return; }
+  if (key.length < 4 || !/\d/.test(key)) { box.hidden = true; box.innerHTML = ""; return; }
+  if (suggestCache.has(key)) { lastList = suggestCache.get(key); showSuggestions(box, lastList, false); return; }
+  showSuggestions(box, refineSuggestions(lastList, q), true); // instant, from what's already on screen
   suggestTimer = setTimeout(async () => {
-    const list = await suggestAddresses(q, { photonUrl: CONFIG.geocoding.photonUrl });
-    if (seq !== suggestSeq) return; // a newer search is on its way
-    box._list = list;
-    box.innerHTML = list.length
-      ? list.map((s, i) => `<button type="button" class="suggestion" role="option" data-i="${i}"><strong>${esc(s.address)}</strong><small>${esc([s.neighbourhood, s.postcode, "Saskatoon"].filter(Boolean).join(" · "))}</small></button>`).join("")
-      : `<div class="none">No exact match yet. Keep typing the full address with the house number, e.g. 1666 Stonebridge Blvd.</div>`;
-    box.hidden = false;
-  }, 350);
+    if (suggestAbort) suggestAbort.abort();
+    suggestAbort = typeof AbortController === "function" ? new AbortController() : null;
+    const list = await suggestAddresses(q, { photonUrl: CONFIG.geocoding.photonUrl, signal: suggestAbort?.signal });
+    suggestCache.set(key, list);
+    if (seq !== suggestSeq) return; // they've typed more since; that search will show
+    lastList = list;
+    showSuggestions(box, list, false);
+  }, 180);
 });
 // Close the list when the person moves on (after a moment, so a tap on a suggestion still lands).
 root.addEventListener("focusout", (e) => {

@@ -142,7 +142,7 @@ const fullLabel = (house, street, unit) => `${unit ? unit + "-" : ""}${house} ${
  * Suggestions while typing. Returns up to 6 exact house addresses in the Saskatoon area:
  * [{ label, address, postcode, neighbourhood, lat, lng }]. Never throws; [] on any problem.
  */
-export async function suggestAddresses(query, { photonUrl = "https://photon.komoot.io", fetchFn } = {}) {
+export async function suggestAddresses(query, { photonUrl = "https://photon.komoot.io", fetchFn, signal } = {}) {
   const q = String(query || "").trim();
   const doFetch = fetchFn || (typeof fetch === "function" ? fetch : null);
   if (!doFetch || q.length < 4 || !/\d/.test(q)) return [];
@@ -154,7 +154,7 @@ export async function suggestAddresses(query, { photonUrl = "https://photon.komo
     url.searchParams.set("lat", "52.13");
     url.searchParams.set("lon", "-106.66");
     url.searchParams.set("bbox", `${AREA.west},${AREA.south},${AREA.east},${AREA.north}`);
-    const res = await doFetch(url.toString(), { headers: { Accept: "application/json" } });
+    const res = await doFetch(url.toString(), { headers: { Accept: "application/json" }, ...(signal ? { signal } : {}) });
     if (!res.ok) return [];
     const data = await res.json();
     const out = [];
@@ -224,4 +224,24 @@ export async function confirmAddress(address, { nominatimUrl = "https://nominati
   } catch (_) {
     return { ok: false, reason: "The address check isn't available right now. Please try again in a minute." };
   }
+}
+
+// Street-type words in their short form, so "Blvd" matches "Boulevard" and so on.
+const SHORT = { boulevard: "blvd", street: "st", avenue: "ave", drive: "dr", crescent: "cres", road: "rd", court: "crt",
+  place: "pl", lane: "ln", terrace: "terr", way: "way", circle: "cir", bay: "bay", manor: "mnr", trail: "trl",
+  east: "e", west: "w", north: "n", south: "s", saskatoon: "" };
+const words = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter(Boolean).map((w) => SHORT[w] ?? w).filter(Boolean);
+
+/**
+ * Narrows suggestions already on screen as the person keeps typing, with no network call:
+ * every typed word must start a word of the address ("1666 stoneb" keeps "1666 Stonebridge Blvd").
+ */
+export function refineSuggestions(list, query) {
+  const q = words(query);
+  if (!q.length) return [];
+  return (list || []).filter((s) => {
+    const raw = String(s.address || "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter(Boolean);
+    const a = [...new Set([...words(s.address), ...raw])];
+    return q.every((w, i) => (i === 0 && /^\d/.test(w) ? a[0] === w || (q.length === 1 && a[0].startsWith(w)) : a.some((x) => x.startsWith(w) || w.startsWith(x) && x.length > 2)));
+  });
 }

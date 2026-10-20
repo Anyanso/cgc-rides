@@ -113,3 +113,20 @@ test("every seated rider carries the driver's leave time, which is before the fi
     assert.ok(a.arriveMin > Math.max(...p.assignments.map((x) => x.pickupMin)));
   }
 });
+
+test("suggestions on screen narrow instantly as typing continues (no network)", async () => {
+  const { refineSuggestions } = await import("../js/geo.js");
+  const L = [{ address: "1666 Stonebridge Boulevard" }, { address: "1666 Stonehenge Way" }, { address: "166 Main Street" }];
+  assert.deepEqual(refineSuggestions(L, "1666 stoneb").map((s) => s.address), ["1666 Stonebridge Boulevard"]);
+  assert.deepEqual(refineSuggestions(L, "1666 Stonebridge Blvd").map((s) => s.address), ["1666 Stonebridge Boulevard"]);
+  assert.deepEqual(refineSuggestions(L, "1666 stonebridge bou").map((s) => s.address), ["1666 Stonebridge Boulevard"]);
+  assert.deepEqual(refineSuggestions(L, "166 main st").map((s) => s.address), ["166 Main Street"]);
+  assert.deepEqual(refineSuggestions(L, "1666 x"), []);
+});
+
+test("an outdated search can be cancelled", async () => {
+  let seen;
+  const ctl = new AbortController();
+  await suggestAddresses("1666 Stonebridge", { signal: ctl.signal, fetchFn: async (_u, opts) => { seen = opts.signal; return { ok: true, json: async () => ({ features: [] }) }; } });
+  assert.equal(seen, ctl.signal);
+});
