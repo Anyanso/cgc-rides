@@ -318,9 +318,12 @@ function planTab(S) {
   const seatedN = pv ? pv.assignments.reduce((n, a) => n + (a.seats ?? 1), 0) : 0;
   const waitingN = pv ? pv.waitlist.reduce((n, w) => n + (w.seats ?? 1), 0) : 0;
   const carsN = pv ? new Set(pv.assignments.map((a) => `${a.driverId}|${a.trip}`)).size : 0;
-  const newcomerBanner = newcomers.length
-    ? banner("info", `<strong>${newcomers.length} new request${newcomers.length > 1 ? "s" : ""} since this plan was made:</strong> ${newcomers.map((r) => esc(people.get(r.riderId)?.name || "Rider")).join(", ")}. ${btn("Add them to the plan", "add-new", {}, "primary")}<br><span class="small">Everyone already placed stays where they are.</span>`)
-    : "";
+  // The plan follows the requests automatically (see autoUpdatePlan in app.js); this says what changed.
+  const newcomerBanner = pv?.autoNote
+    ? banner("info", `<strong>Updated automatically.</strong> ${esc(pv.autoNote)} Not saved or shared yet: view it, then save a draft or approve.`)
+    : newcomers.length
+      ? banner("info", `${newcomers.length} new request${newcomers.length > 1 ? "s" : ""} (${newcomers.map((r) => esc(people.get(r.riderId)?.name || "Rider")).join(", ")}) will be added to the plan automatically.`)
+      : "";
 
   html += `<div class="row wrap">${status}${S.busy ? `<span class="small muted">Working…</span>` : ""}</div>
     <div class="row wrap">${open ? btn("Hide the plan", "hide-plan") : btn(pv ? "View the plan" : "Make and view the plan", "view-plan", {}, "primary")}</div>

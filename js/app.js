@@ -7,7 +7,7 @@ import { peopleCsv, backupJson, stamp, download } from "./backup.js";
 import { toISO, fmtDate } from "./dates.js";
 import { confirmAddress, suggestAddresses, refineSuggestions, normalizePhone, normalizePostal, isConfirmed } from "./geo.js";
 import { driverIssue } from "./matching.js";
-import { draftPlan, recompute, applyMove, reassignDriver } from "./planner.js";
+import { draftPlan, recompute, applyMove, reassignDriver, sundayPeople } from "./planner.js";
 import { driverAvailable, CONSENT_WORDING, isDriver } from "./models.js";
 import { shell, landingView, signInView, demoPickerView, roleView, esc } from "./views.js";
 import { lastMinuteBroadcast } from "./texts.js";
@@ -88,6 +88,46 @@ function planViewFromSaved() {
   S.planView = saved ? { status: saved.status, assignments: saved.assignments, waitlist: saved.waitlist, trips: null, warnings: [], excluded: excludedFor(S.sunday), dirty: false, travelNote: "", travelSource: saved.summary?.travelSource } : null;
 }
 
+/**
+ * Keeps the plan in step with the requests, using the matching rules (the app's vision):
+ * - no plan yet but people are asking -> make one;
+ * - new requests -> place them; cancelled riders -> take them out. Everyone else stays put.
+ * The result is NOT saved and NOT shared: the leader views it, then saves a draft or approves.
+ * Never touches a plan the leader is in the middle of editing.
+ */
+async function autoUpdatePlan() {
+  if (!S.data || !S.sunday || !S.church) return;
+  const pv = S.planView;
+  if (pv?.dirty) return;
+  const asking = S.data.requests.filter((r) => r.sunday === S.sunday && r.status !== "cancelled");
+  const askingIds = new Set(asking.map((r) => r.riderId));
+  const name = (id) => S.data.profiles.find((p) => p.id === id)?.name || "a rider";
+  let keep = [];
+  let note;
+  if (!pv) {
+    if (!asking.length) return;
+    note = `Plan made automatically from ${asking.length} request${asking.length > 1 ? "s" : ""}.`;
+  } else {
+    const placed = new Set([...pv.assignments.map((a) => a.riderId), ...pv.waitlist.map((w) => w.riderId)]);
+    const added = asking.filter((r) => !placed.has(r.riderId)).map((r) => name(r.riderId));
+    const gone = [...placed].filter((id) => !askingIds.has(id)).map(name);
+    // A driver the leader has since cleared (and whose address is confirmed) can take people waiting.
+    // Drivers who aren't cleared yet are never used.
+    const inPlan = new Set(pv.assignments.map((a) => a.driverId));
+    const fresh = pv.waitlist.length ? sundayPeople(S.data, S.sunday).drivers.filter((d) => !driverIssue(d, S.sunday) && !inPlan.has(d.id)).map((d) => d.name) : [];
+    if (!added.length && !gone.length && !fresh.length) return;
+    keep = pv.assignments.filter((a) => askingIds.has(a.riderId));
+    note = [added.length && `Added ${added.join(", ")}`, gone.length && `took out ${gone.join(", ")} (no longer asking)`,
+      fresh.length && `offered seats with ${fresh.join(", ")} (newly cleared) to people waiting`].filter(Boolean).join("; ") + ". Everyone else stayed where they were.";
+    note = note[0].toUpperCase() + note.slice(1);
+  }
+  try {
+    const res = await draftPlan({ data: S.data, sunday: S.sunday, church: S.church, config: CONFIG, keep });
+    adoptResult(res, pv?.status || "draft");
+    S.planView.autoNote = note;
+  } catch (err) { console.error(err); }
+}
+
 async function load() {
   S.sundays = store.sundays();
   S.me = await store.getMe();
@@ -110,6 +150,7 @@ async function load() {
     S.data = await store.leaderData();
     S.sunday = S.sunday && S.sundays.includes(S.sunday) ? S.sunday : S.sundays[0];
     if (!S.planView || !S.planView.dirty) planViewFromSaved();
+    await autoUpdatePlan();
   }
 }
 
@@ -210,8 +251,8 @@ const actions = {
   tab(d) { S.tab = d.tab; S.editing = null; S.formDraft = null; },
   async "pick-sunday"(d) {
     if (d.sunday === S.sunday) return;
-    if (S.planView?.dirty && !confirm("You have unsaved changes to this plan. Switch anyway?")) return;
-    S.sunday = d.sunday; S.planOpen = false; planViewFromSaved();
+    if (S.planView?.dirty && S.planView.edited && !confirm("You have unsaved changes to this plan. Switch anyway?")) return;
+    S.sunday = d.sunday; S.planOpen = false; planViewFromSaved(); await autoUpdatePlan();
   },
   copy(d) { return copyText(d.text).then(() => say("Copied. Paste it into your message.")); },
 
@@ -305,7 +346,7 @@ async function onMove(el) {
   needChurch();
   const moved = applyMove({ assignments: S.planView.assignments, waitlist: S.planView.waitlist }, el.dataset.rider, el.value, el.dataset.from);
   const res = await recompute({ data: S.data, sunday: S.sunday, church: S.church, config: CONFIG, ...moved });
-  S.planView = { ...S.planView, assignments: res.assignments, waitlist: res.waitlist, trips: res.trips, warnings: res.warnings, dirty: true, travelNote: res.travelNote, travelSource: res.travelSource };
+  S.planView = { ...S.planView, assignments: res.assignments, waitlist: res.waitlist, trips: res.trips, warnings: res.warnings, dirty: true, edited: true, travelNote: res.travelNote, travelSource: res.travelSource };
 }
 
 async function onSubmit(form) {
