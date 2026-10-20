@@ -132,7 +132,8 @@ export async function createLiveStore(config, { createClient } = {}) {
         from("plans").select("*").gte("sunday", since),
         from("assignments").select("*"),
         from("waitlist").select("*"),
-        from("alerts").select("*").order("created_at", { ascending: false }).limit(50),
+        // Every open alert, plus done ones from the last 14 days (older ones stay in the database).
+        from("alerts").select("*").or(`resolved.eq.false,created_at.gte.${new Date(Date.now() - 14 * 86400000).toISOString()}`).order("created_at", { ascending: false }).limit(300),
         from("consent_log").select("*").order("at", { ascending: false }).limit(200),
         from("help_requests").select("*").gte("sunday", since).neq("status", "cancelled").order("created_at", { ascending: false }),
         from("help_asks").select("*"),

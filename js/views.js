@@ -423,7 +423,9 @@ function peopleTab(S) {
 
 function alertsTab(S) {
   const open = S.data.alerts.filter((a) => !a.resolved);
-  const done = S.data.alerts.filter((a) => a.resolved);
+  // Done alerts stay (folded away) for 14 days, then drop off the screen. They remain in the database and backups.
+  const cutoff = Date.now() - 14 * 86400000;
+  const done = S.data.alerts.filter((a) => a.resolved && (!a.createdAt || Date.parse(a.createdAt) >= cutoff));
   const people = ridersMap(S);
   const row = (a) => {
     const day = a.sunday ? fmtDate(a.sunday, { weekday: "long", month: "long", day: "numeric" }) : "";
@@ -439,11 +441,13 @@ function alertsTab(S) {
       const pickup = seat?.pickupMin != null ? ` (pickup ${esc(fmtMin(seat.pickupMin))})` : ((a.message.match(/\(pickup ([^)]+)\)/) || [])[1] ? ` (pickup ${esc(a.message.match(/\(pickup ([^)]+)\)/)[1])})` : "");
       body = `<p><strong>${esc(r?.name || "A rider")} cancelled their ride for ${esc(day)}.</strong></p>` + (d
         ? `<p>They were in <strong>${esc(d.name)}</strong>'s car${pickup}, so ${esc(firstName(d.name))} now has a free seat${left ? "" : " and no one else to pick up"}. They've been taken out of the plan; if they ask again, they'll need your approval.</p>
-           <p class="small"><strong>What to do:</strong> 1) Update the plan, so ${esc(firstName(d.name))}'s pickup list and leave time are right, then approve it. 2) Let ${esc(firstName(d.name))} know.</p>`
+           <p class="small"><strong>Already done:</strong> the plan has been updated without ${esc(firstName(r?.name || "them"))}.<br>
+           <strong>What to do:</strong> 1) Send ${esc(firstName(d.name))} the message below. ${left ? `2) In the Plan tab, tap <strong>Approve & share</strong> so ${esc(firstName(d.name))}'s pickup list and leave time are right, then send the new list from Texts. ` : ""}Then tap <strong>Mark done</strong>.</p>`
         : `<p class="small">They're no longer in the plan, so nothing else needs to change.</p>`);
       if (!a.resolved && d) {
         const msg = T.riderCancelledToDriver(a.sunday, d, r, left);
-        actions = btn("Update the plan", "alert-plan", { sunday: a.sunday, alert: a.id }, "primary") + btn(`Copy message to ${firstName(d.name)}`, "copy", { text: msg });
+        body += `<pre class="msg">${esc(msg)}</pre>`;
+        actions = btn(`Copy message to ${firstName(d.name)}`, "copy", { text: msg }, "primary");
       }
     } else if (a.kind === "driver_cancel") {
       const d = people.get(a.driverId);
@@ -451,14 +455,14 @@ function alertsTab(S) {
       const note = (a.message.match(/Note: (.*)$/) || [])[1];
       body = `<p><strong>${esc(d?.name || "A driver")} can't drive on ${esc(day)}.</strong></p>
         <p>${riders.length ? `${riders.length} ${riders.length === 1 ? "rider needs" : "riders need"} a new driver: ${esc(riders.join(", "))}.` : "They had no riders, so nobody is affected."}${note ? ` Their note: “${esc(note)}”` : ""}</p>
-        ${riders.length ? `<p class="small"><strong>What to do:</strong> tap Reassign. The app moves their riders to the closest drivers with room, then you approve.</p>` : ""}`;
-      if (!a.resolved && riders.length) actions = btn("Reassign their riders", "reassign", { driver: a.driverId, sunday: a.sunday, alert: a.id }, "primary");
+        ${riders.length ? `<p class="small"><strong>Already done:</strong> the plan has moved their riders to the closest drivers with room (anyone who doesn't fit is on the waiting list).<br>
+          <strong>What to do:</strong> in the Plan tab, check it and tap <strong>Approve & share</strong>, then send the new messages from Texts. Then tap <strong>Mark done</strong>.</p>` : ""}`;
     }
     return `<article class="card ${a.resolved ? "soft" : "warn"}">${body}
       ${a.resolved ? "" : `<div class="row wrap">${actions}${btn("Mark done", "resolve", { id: a.id })}</div>`}</article>`;
   };
   return `<h3>Needs attention (${open.length})</h3>${open.map(row).join("") || "<p class='muted'>Nothing right now.</p>"}
-    ${done.length ? `<details><summary>${done.length} done</summary>${done.slice(0, 20).map(row).join("")}</details>` : ""}`;
+    ${done.length ? `<details><summary>${done.length} done in the last 14 days</summary>${done.map(row).join("")}</details>` : ""}`;
 }
 
 function copyBlock(label, text, note = "") {

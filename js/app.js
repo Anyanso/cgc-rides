@@ -118,10 +118,14 @@ async function autoUpdatePlan() {
     // A driver the leader has since cleared (and whose address is confirmed) can take people waiting.
     // Drivers who aren't cleared yet are never used.
     const inPlan = new Set(pv.assignments.map((a) => a.driverId));
-    const fresh = pv.waitlist.length ? sundayPeople(S.data, S.sunday).drivers.filter((d) => !driverIssue(d, S.sunday) && !inPlan.has(d.id)).map((d) => d.name) : [];
-    if (!added.length && !gone.length && !fresh.length) return;
-    keep = pv.assignments.filter((a) => askingIds.has(a.riderId));
+    const drivers = sundayPeople(S.data, S.sunday).drivers;
+    const fresh = pv.waitlist.length ? drivers.filter((d) => !driverIssue(d, S.sunday) && !inPlan.has(d.id)).map((d) => d.name) : [];
+    // A driver in the plan who can't drive any more (said "I can't make it", paused, etc.): their riders are moved.
+    const dropped = [...inPlan].filter((id) => { const d = drivers.find((x) => x.id === id); return !d || driverIssue(d, S.sunday); });
+    if (!added.length && !gone.length && !fresh.length && !dropped.length) return;
+    keep = pv.assignments.filter((a) => askingIds.has(a.riderId) && !dropped.includes(a.driverId));
     note = [added.length && `Added ${added.join(", ")}`, gone.length && `took out ${gone.join(", ")} (no longer asking)`,
+      dropped.length && `moved ${dropped.map(name).join(", ")}'s riders to other drivers (${dropped.length > 1 ? "they can't" : "they can't"} drive)`,
       fresh.length && `offered seats with ${fresh.join(", ")} (newly cleared) to people waiting`].filter(Boolean).join("; ") + ". Everyone else stayed where they were.";
     note = note[0].toUpperCase() + note.slice(1);
   }
@@ -305,16 +309,8 @@ const actions = {
     if (S.planView.warnings?.some((w) => w.code === "over_seats" || w.code === "driver_issue")) throw new Error("Fix the warnings about seats or driver clearance before approving.");
     if (S.planView.warnings?.some((w) => w.code === "no_location")) throw new Error("Someone in a car has no confirmed address, so their pickup time is unknown. Move them to the waiting list or confirm their address, then approve.");
     if (S.planView.travelSource === "estimate" && CONFIG.routing.enabled && !confirm("Real road times couldn't be loaded, so these times are rough estimates (with a bigger safety margin). Press Cancel and then Redraft to try again, or OK to approve anyway.")) return;
-    // Alerts the approved plan has dealt with are cleared on their own: a cancelled rider no
-    // longer in a car, or a driver who can't make it and no longer has riders.
-    const asg = S.planView.assignments;
-    const handled = (S.data.alerts || []).filter((x) => !x.resolved && x.sunday === S.sunday && (
-      (x.kind === "rider_cancel" && !asg.some((y) => y.riderId === x.riderId)) ||
-      (x.kind === "driver_cancel" && !asg.some((y) => y.driverId === x.driverId))));
     await persistPlan("approved");
-    for (const x of handled) await store.resolveAlert(x.id);
-    if (handled.length) await reload();
-    say(`Approved. Drivers and riders can now see their details. Copy their messages from the Texts tab.${handled.length ? ` ${handled.length} alert${handled.length > 1 ? "s" : ""} cleared, as the plan now handles ${handled.length > 1 ? "them" : "it"}.` : ""}`);
+    say("Approved. Drivers and riders can now see their details. Copy their messages from the Texts tab, then mark any alerts done.");
   },
   async reassign(d) {
     needChurch();
