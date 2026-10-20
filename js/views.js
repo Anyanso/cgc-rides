@@ -409,8 +409,37 @@ function peopleTab(S) {
 function alertsTab(S) {
   const open = S.data.alerts.filter((a) => !a.resolved);
   const done = S.data.alerts.filter((a) => a.resolved);
-  const row = (a) => `<article class="card ${a.resolved ? "soft" : "warn"}"><p>${esc(a.message)}</p>
-    ${a.resolved ? "" : `<div class="row wrap">${a.kind === "driver_cancel" ? btn("Reassign their riders", "reassign", { driver: a.driverId, sunday: a.sunday, alert: a.id }, "primary") : ""}${btn("Mark done", "resolve", { id: a.id })}</div>`}</article>`;
+  const people = ridersMap(S);
+  const row = (a) => {
+    const day = a.sunday ? fmtDate(a.sunday, { weekday: "long", month: "long", day: "numeric" }) : "";
+    const plan = a.sunday ? S.data.plans[a.sunday] : null;
+    let body = `<p>${esc(a.message)}</p>`;
+    let actions = "";
+    if (a.kind === "rider_cancel") {
+      const r = people.get(a.riderId);
+      const seat = plan?.assignments.find((x) => x.riderId === a.riderId);
+      const d = seat ? people.get(seat.driverId) : null;
+      const left = seat ? plan.assignments.filter((x) => x.driverId === seat.driverId && x.riderId !== a.riderId).length : 0;
+      body = `<p><strong>${esc(r?.name || "A rider")} cancelled their ride for ${esc(day)}.</strong></p>` + (d
+        ? `<p>They were in <strong>${esc(d.name)}</strong>'s car (pickup ${esc(fmtMin(seat.pickupMin))}), so ${esc(firstName(d.name))} now has a free seat${left ? "" : " and no one else to pick up"}.</p>
+           <p class="small"><strong>What to do:</strong> 1) Update the plan, so ${esc(firstName(d.name))}'s pickup list and leave time are right, then approve it. 2) Let ${esc(firstName(d.name))} know.</p>`
+        : `<p class="small">They're no longer in the plan, so nothing else needs to change.</p>`);
+      if (!a.resolved && d) {
+        const msg = T.riderCancelledToDriver(a.sunday, d, r, left);
+        actions = btn("Update the plan", "alert-plan", { sunday: a.sunday, alert: a.id }, "primary") + btn(`Copy message to ${firstName(d.name)}`, "copy", { text: msg });
+      }
+    } else if (a.kind === "driver_cancel") {
+      const d = people.get(a.driverId);
+      const riders = (plan?.assignments || []).filter((x) => x.driverId === a.driverId).map((x) => people.get(x.riderId)?.name).filter(Boolean);
+      const note = (a.message.match(/Note: (.*)$/) || [])[1];
+      body = `<p><strong>${esc(d?.name || "A driver")} can't drive on ${esc(day)}.</strong></p>
+        <p>${riders.length ? `${riders.length} ${riders.length === 1 ? "rider needs" : "riders need"} a new driver: ${esc(riders.join(", "))}.` : "They had no riders, so nobody is affected."}${note ? ` Their note: “${esc(note)}”` : ""}</p>
+        ${riders.length ? `<p class="small"><strong>What to do:</strong> tap Reassign. The app moves their riders to the closest drivers with room, then you approve.</p>` : ""}`;
+      if (!a.resolved && riders.length) actions = btn("Reassign their riders", "reassign", { driver: a.driverId, sunday: a.sunday, alert: a.id }, "primary");
+    }
+    return `<article class="card ${a.resolved ? "soft" : "warn"}">${body}
+      ${a.resolved ? "" : `<div class="row wrap">${actions}${btn("Mark done", "resolve", { id: a.id })}</div>`}</article>`;
+  };
   return `<h3>Needs attention (${open.length})</h3>${open.map(row).join("") || "<p class='muted'>Nothing right now.</p>"}
     ${done.length ? `<details><summary>${done.length} done</summary>${done.slice(0, 20).map(row).join("")}</details>` : ""}`;
 }

@@ -101,3 +101,10 @@ export function lastMinuteBroadcast(sunday, riderFirstName, neighbourhood, seats
 export function lastMinuteAsk(sunday, driver, riderName, neighbourhood, seats, awayMin, pickupMin) {
   return `Hi ${first(driver.name)}, a last-minute ride request for ${fmtDate(sunday)}: ${first(riderName)}${neighbourhood ? ` in ${neighbourhood}` : ""} needs a ride to church${seats > 1 ? ` (${seats} people)` : ""}. You're about ${awayMin} minutes from them. Could you pick them up around ${fmtMin(pickupMin)}? Please reply YES or NO, and I'll send you the address and details.`;
 }
+
+/** To the driver when one of their riders cancels. */
+export function riderCancelledToDriver(sunday, driver, rider, othersLeft) {
+  return `Hi ${first(driver.name)}, ${first(rider?.name)} has cancelled their ride for ${fmtDate(sunday)}, so you don't need to pick them up. ${othersLeft
+    ? "I'll send your updated pickup list and leave time shortly."
+    : "You have no pickups now. Thank you for being ready to help!"}`;
+}

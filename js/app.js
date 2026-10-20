@@ -329,6 +329,14 @@ const actions = {
     say("Re-placed that group across cars. Everyone else stayed where they were. Review, then save.");
   },
   async resolve(d) { await store.resolveAlert(d.id); await reload(); },
+  /** From a "rider cancelled" alert: open that Sunday's plan, already updated without them, ready to approve. */
+  async "alert-plan"(d) {
+    S.sunday = d.sunday; S.planView = null; planViewFromSaved(); await autoUpdatePlan();
+    await store.resolveAlert(d.alert);
+    S.data.alerts = S.data.alerts.map((a) => (a.id === d.alert ? { ...a, resolved: true } : a));
+    S.tab = "plan"; S.planOpen = true;
+    say("The plan is updated without them. Check it, then tap Approve & share. Copy the new pickup list from the Texts tab.");
+  },
   /** Puts a last-minute rider straight into a driver's car (trip 1), then shows the plan to save or approve. */
   async "help-assign"(d) {
     needChurch();
