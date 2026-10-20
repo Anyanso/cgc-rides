@@ -11,7 +11,7 @@ export const CONFIG = {
   //    in Google Maps, right-click the church's front door, click the two numbers at the top
   //    of the menu (that copies them), and paste them as lat and lng below.
   //    Until then the app looks up the street address and shows the leader where it landed.
-  church: { address: "601 Eastlake Avenue", lat: null, lng: null },
+  church: { address: "601 Eastlake Avenue", lat: 52.119574, lng: -106.659182 },
 
   // One service only for now. Drivers are scheduled to ARRIVE arriveBeforeMin minutes before
   // the service. Each rider's "be ready by" time is worked out from the real route (their
