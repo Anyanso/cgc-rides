@@ -35,7 +35,8 @@ function riderBadges(r) {
 // ---------------------------------------------------------------- shell + entry screens
 
 export function shell(S, inner) {
-  const who = S.me ? `<span class="who">${esc(firstName(S.me.name))} · ${esc(S.me.role)}</span>` : "";
+  const role = S.me?.role === "leader" ? (S.me.isSupervisor ? "supervisor" : (S.me.leaderTitle || "leader").toLowerCase()) : S.me?.role;
+  const who = S.me ? `<span class="who">${esc(firstName(S.me.name))} · ${esc(role)}</span>` : "";
   const demo = S.mode === "demo"
     ? `<div class="demobar"><strong>DEMO</strong> · fictional people, nothing is saved. ${
         S.demoPeople ? `<label>View as <select data-act-change="viewas">${S.demoPeople.map((p) =>
@@ -422,6 +423,65 @@ function planTab(S) {
   return html;
 }
 
+// The team: the supervisor and up to two leaders. Only the supervisor can change it.
+const TEAM_MAX = 2;
+function teamSection(S) {
+  const all = S.data.profiles;
+  const sup = all.find((p) => p.role === "leader" && p.isSupervisor);
+  const leaders = all.filter((p) => p.role === "leader" && !p.isSupervisor);
+  const iAmSup = !!S.me.isSupervisor;
+  const title = (p) => p.isSupervisor ? "Supervisor" : p.leaderTitle || "Leader";
+  const taken = (t) => leaders.some((l) => (l.leaderTitle || "Leader") === t);
+  // Switch Leader <-> Assistant leader, only when the other title is free.
+  const swap = (p) => {
+    const to = title(p) === "Assistant leader" ? "Leader" : "Assistant leader";
+    return taken(to) ? "" : btn(`Make ${to === "Leader" ? "Leader" : "Assistant"}`, "team-role", { id: p.id, role: to === "Leader" ? "leader" : "assistant" });
+  };
+  const row = (p) => `<li class="personrow"><div><strong>${esc(p.name)}</strong>${p.id === S.me.id ? " (you)" : ""} ${badge(title(p), p.isSupervisor ? "ok" : "muted")}<br>
+    <span class="small muted">${esc(p.email || p.phone || "")}</span></div>
+    ${iAmSup && !p.isSupervisor ? `<div class="row wrap">${swap(p)}${btn("Move to driver", "team-role", { id: p.id, role: "driver" })}${btn("Move to rider", "team-role", { id: p.id, role: "rider" })}</div>` : ""}</li>`;
+  let html = `<article class="card team"><h3>Team</h3>
+    <ul class="plain">${[sup, ...leaders].filter(Boolean).map(row).join("")}</ul>`;
+  if (!iAmSup) {
+    html += `<p class="small muted">${sup ? `${esc(sup.name)} is the supervisor and decides who leads.` : "No supervisor is set yet."} Leaders can do everything else in the app.</p></article>`;
+    return html;
+  }
+  // Signed-in people only: someone the leader added by phone has no login, so can't lead.
+  const candidates = all.filter((p) => p.role !== "leader" && p.userId).sort((a, b) => a.name.localeCompare(b.name));
+  html += `<p class="small muted">You're the supervisor: you choose up to two leaders (a Leader and an Assistant leader). Leaders can do everything in the app except change the team. Anyone moved back keeps their details; a driver keeps their checks.</p>`;
+  html += leaders.length >= TEAM_MAX
+    ? `<p class="small">You have two leaders. To add someone else, move one back to driver or rider first.</p>`
+    : candidates.length
+      ? `<form data-form="team-add" class="stack"><label class="field">Make a leader
+          <select name="person" required><option value="">Choose someone who has signed in…</option>${candidates.map((p) => `<option value="${esc(p.id)}">${esc(p.name)} (${esc(p.role)})</option>`).join("")}</select></label>
+          <fieldset class="field"><legend>As</legend>
+          ${taken("Leader") ? "" : `<label class="check"><input type="radio" name="role" value="leader" checked> Leader</label>`}
+          ${taken("Assistant leader") ? "" : `<label class="check"><input type="radio" name="role" value="assistant" ${taken("Leader") ? "checked" : ""}> Assistant leader</label>`}</fieldset>
+          <button class="btn primary" type="submit">Make leader</button></form>`
+      : `<p class="small muted">No one else has signed in yet. Once someone registers in the app, you can make them a leader here.</p>`;
+  html += `</article>`;
+
+  // Handing over
+  html += `<article class="card team"><h3>Hand over the supervisor role</h3>`;
+  if (!leaders.length) {
+    html += `<p class="small muted">When you leave, make the next person a leader first (above), then hand over to them here.</p>`;
+  } else {
+    html += `<p class="small muted">For when you step down. The person you choose becomes supervisor and can then choose the other leaders. You can't undo this yourself: only the new supervisor can give it back.</p>
+      <form data-form="handover" class="stack">
+      <label class="field">Hand over to <select name="person" required><option value="">Choose a leader…</option>${leaders.map((p) => `<option value="${esc(p.id)}">${esc(p.name)} (${esc(title(p))})</option>`).join("")}</select></label>
+      <label class="field">After that, I will be
+        <select name="myRole"><option value="rider">a rider</option><option value="driver">a driver (keeps my car details)</option><option value="assistant">an assistant leader</option><option value="leader">a leader</option></select></label>
+      <label class="field">Type their full name to confirm <input name="confirmName" autocomplete="off" required></label>
+      <button class="btn danger" type="submit">Hand over</button></form>`;
+  }
+  html += `</article>`;
+
+  const log = S.data.teamLog || [];
+  if (log.length) html += `<details class="card"><summary>Team changes (${log.length})</summary><ul class="plain small">${log.map((t) =>
+    `<li>${esc(fmtDate(String(t.at).slice(0, 10), { month: "short", day: "numeric", year: "numeric" }))}: ${esc(t.actorName || "Someone")} ${esc(t.change)}</li>`).join("")}</ul></details>`;
+  return html;
+}
+
 function peopleTab(S) {
   if (S.editing) {
     const p = S.editing === "new" ? { role: "rider" } : S.data.profiles.find((x) => x.id === S.editing);
@@ -437,7 +497,7 @@ function peopleTab(S) {
     return `<li class="personrow"><div><strong>${esc(d.name)}</strong> ${st}<br><span class="small muted">${esc(d.seats)} seats · ${esc(d.neighbourhood || "no area")} · ${checkNote} · licence ${d.licenceOk ? "✓" : "–"} · insurance ${d.insuranceOk ? "✓" : "–"}</span></div>${btn("Edit / review", "edit", { id: d.id })}</li>`;
   };
   const rRow = (r) => `<li class="personrow"><div><strong>${esc(r.name)}</strong> ${riderBadges(r)}<br><span class="small muted">${esc(r.neighbourhood || "")} · ${r.textsConsentAt ? "texts OK" : "no text consent"}${r.weeklyCheckin ? " · weekly check-in" : ""}</span></div>${btn("Edit", "edit", { id: r.id })}</li>`;
-  return `<div class="row wrap">${btn("Add a rider who phoned in", "edit", { id: "new" }, "primary")}</div>
+  return `${teamSection(S)}<div class="row wrap">${btn("Add a rider who phoned in", "edit", { id: "new" }, "primary")}</div>
     <h3>Drivers (${drivers.length})</h3><ul class="plain">${drivers.map(dRow).join("") || "<li class='muted'>No drivers yet.</li>"}</ul>
     <h3>Riders (${riders.length})</h3><ul class="plain">${riders.map(rRow).join("") || "<li class='muted'>No riders yet.</li>"}</ul>
     <h3>Keep a copy</h3>
