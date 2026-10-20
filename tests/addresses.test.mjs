@@ -169,3 +169,36 @@ test("a driver whose rider cancelled and rebooked gets an apology in their picku
   const msg = driverRoute("2026-10-25", { name: "Dami" }, cars, riders, new Map(), { rebooked: ["Jo"] });
   assert.match(msg.split("\n")[1], /^Sorry for the back-and-forth: Jo is coming after all, so they're back on your list\.$/);
 });
+
+test("services: a joint service changes times and labels; a special weekday service asks drivers rather than assuming", async () => {
+  const S = await import("../js/services.js");
+  const { driverAvailable } = await import("../js/models.js");
+  const { driverRoute, serviceAnnouncement, weeklyCheckin } = await import("../js/texts.js");
+  S.setServices([
+    { date: "2026-12-27", title: "Joint service", time: "10:00", arriveBeforeMin: 15, cutoff: null, cancelled: false, note: "" },
+    { date: "2026-12-24", title: "Christmas Eve service", time: "19:00", arriveBeforeMin: 20, cutoff: null, cancelled: false, note: "" },
+    { date: "2027-01-03", title: "", time: "11:45", arriveBeforeMin: 15, cutoff: null, cancelled: true, note: "" },
+  ]);
+  assert.equal(S.serviceFor("2026-12-20").title, "Sunday service");
+  assert.equal(S.serviceFor("2026-12-27").time, "10:00");
+  assert.equal(S.configFor("2026-12-27").service.time, "10:00");
+  assert.equal(S.configFor("2026-12-27").matching.earliestPickup, "07:45", "an early service allows earlier pickups");
+  assert.equal(S.dayLabel("2026-12-24"), "Christmas Eve service, Thu, Dec 24");
+  assert.equal(S.cutoffLabel("2026-12-24"), "Wednesday at noon");
+  assert.ok(S.upcomingDays(4, new Date(2026, 11, 1)).includes("2026-12-24"));
+  assert.equal(S.serviceFor("2027-01-03").cancelled, true);
+
+  const every = { id: "d", drivesEveryWeek: true };
+  assert.equal(driverAvailable(every, [], "2026-12-27"), true, "every-week drivers count for a Sunday");
+  assert.equal(driverAvailable(every, [], "2026-12-24"), false, "...but are asked for a weekday special service");
+  assert.equal(driverAvailable(every, [{ driverId: "d", sunday: "2026-12-24", available: true }], "2026-12-24"), true);
+
+  const msg = driverRoute("2026-12-27", { name: "Dami" }, [{ trip: 1, stops: [{ riderId: "jo", pickupMin: 545, seats: 1, departMin: 530, arriveMin: 585 }] }], new Map([["jo", { name: "Jo", address: "1 A St" }]]));
+  assert.match(msg, /driving on Joint service, Sun, Dec 27/);
+  assert.match(msg, /service is at 10:00 AM/);
+  assert.match(serviceAnnouncement("2026-12-27"), /Joint service at 10:00 AM \(not the usual 11:45 AM\)/);
+  assert.match(serviceAnnouncement("2026-12-24"), /Christmas Eve service on Thursday, December 24 at 7:00 PM/);
+  assert.match(serviceAnnouncement("2027-01-03"), /no service on Sunday, January 3/);
+  assert.match(weeklyCheckin("2026-12-27"), /to the Joint service \(Sun, Dec 27, 10:00 AM\)/);
+  S.setServices([]);
+});

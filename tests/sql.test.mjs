@@ -311,3 +311,34 @@ test("a rider who cancels leaves the plan; asking again needs the leader's appro
   assert.equal((await as("c1", () => q("select * from my_route($1)", [S2]))).length, 0, "the driver doesn't see them yet");
   assert.equal((await q("select resolved from alerts where id=$1", [al.id]))[0].resolved, true);
 });
+
+test("services: special days take requests, a Sunday can be called off, a cutoff can be set", async () => {
+  Object.assign(U, { s1: "00000000-0000-0000-0000-0000000000e1" });
+  await db.query("insert into auth.users (id,email) values ($1,'s1@example.com')", [U.s1]);
+  await db.query("insert into profiles (user_id,full_name,role) values ($1,'Sam Rider','rider')", [U.s1]);
+  const sam = (await q("select id from profiles where user_id=$1", [U.s1]))[0].id;
+  const day = (n) => { const d = new Date(Date.now() + n * 86400000); return d.toISOString().slice(0, 10); };
+  const weekday = (() => { for (let n = 10; ; n++) { const d = new Date(Date.now() + n * 86400000); if (d.getUTCDay() === 4) return d.toISOString().slice(0, 10); } })();
+  const req = (date) => as("s1", () => db.query("insert into ride_requests (rider_id,sunday) values ($1,$2)", [sam, date]));
+
+  await assert.rejects(() => req(weekday), /no service on that day/);
+  await as("leader", () => db.query("insert into services (service_date,title,start_time) values ($1,'Christmas Eve service','19:00')", [weekday]));
+  await req(weekday); // now accepted
+
+  // Special services can be booked further ahead than ordinary Sundays (up to 120 days).
+  const far = (() => { for (let n = 60; ; n++) { const d = new Date(Date.now() + n * 86400000); if (d.getUTCDay() === 5) return d.toISOString().slice(0, 10); } })();
+  await as("leader", () => db.query("insert into services (service_date,title,start_time) values ($1,'Good Friday service','10:00')", [far]));
+  await req(far);
+
+  const off = sundayInDays(28);
+  await as("leader", () => db.query("insert into services (service_date,cancelled) values ($1,true)", [off]));
+  await assert.rejects(() => req(off), /no service on/);
+
+  const early = sundayInDays(35);
+  await as("leader", () => db.query("insert into services (service_date,title,start_time,cutoff) values ($1,'Joint service','10:00',now() - interval '1 hour')", [early]));
+  await assert.rejects(() => req(early), /closed/);
+
+  // Everyone signed in can read the services; only the leader can change them.
+  assert.ok((await as("s1", () => q("select * from services"))).length >= 4);
+  await assert.rejects(() => as("s1", () => db.query("insert into services (service_date) values ($1)", [day(50)])), /row-level security/);
+});

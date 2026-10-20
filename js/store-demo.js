@@ -2,7 +2,8 @@
 // It follows the same visibility rules as the real database so the demo shows true behaviour.
 
 import { makeDemoState, DEMO_CHURCH } from "./demo-data.js";
-import { isClosed, nextSundays } from "./dates.js";
+import { nextSundays } from "./dates.js";
+import { serviceFor, isClosedFor, setServices } from "./services.js";
 import { validatePlan } from "./models.js";
 import { geocode } from "./geo.js";
 
@@ -62,8 +63,12 @@ export function createDemoStore({ now = () => new Date() } = {}) {
     },
     async requestRide(sunday, { rideHome = false, note = null, extraPeople = 0, canSplit = false } = {}) {
       const m = me();
-      need(db.sundays.includes(sunday), "That Sunday is not open for requests.");
-      need(!isClosed(sunday, now()), `Requests for this Sunday closed on Saturday at noon. Please contact the transport leader.`);
+      // Same rules as the database: a service day, not called off, before its cutoff.
+      setServices(db.services);
+      const svc = serviceFor(sunday);
+      need(!svc.cancelled, "There is no service on that day.");
+      need(svc.sunday || svc.changed, "There is no service on that day.");
+      need(!isClosedFor(sunday, now()), "Requests for this service have closed. Please contact the transport leader.");
       const ex = db.requests.find((r) => r.riderId === m.id && r.sunday === sunday);
       if (ex && ex.status === "cancelled") db.alerts.forEach((a) => { if (a.kind === "rider_cancel" && a.riderId === m.id && a.sunday === sunday) a.resolved = true; });
       if (ex) Object.assign(ex, { status: "requested", rideHome, note, extraPeople, canSplit });
@@ -221,6 +226,14 @@ export function createDemoStore({ now = () => new Date() } = {}) {
       if (r) r.status = "cancelled";
     },
     async resolveAlert(id) { const a = db.alerts.find((x) => x.id === id); if (a) a.resolved = true; },
+
+    // ---- services (leader changes to a day; everyone can read them)
+    async services() { return fresh(db.services); },
+    async saveService(row) {
+      need(isLeader(), "Only the transport leader can change services.");
+      db.services = db.services.filter((x) => x.date !== row.date).concat([fresh(row)]);
+    },
+    async deleteService(date) { need(isLeader(), "Only the transport leader can change services."); db.services = db.services.filter((x) => x.date !== date); },
 
     async locate(address, neighbourhood, geocoding) {
       return geocode(address, { neighbourhood, nominatimUrl: geocoding?.nominatimUrl, enabled: false });
