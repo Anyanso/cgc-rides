@@ -2,7 +2,7 @@
 // no network, no clicking. That keeps them testable in Node. Buttons carry data-act="..."
 // and app.js listens for them. EVERY piece of user-supplied text goes through esc().
 
-import { NEIGHBOURHOODS } from "./geo.js";
+import { isConfirmed } from "./geo.js";
 import { fmtDate, fmtMin, isClosed, toMin } from "./dates.js";
 import { driverAvailable, DRIVER_STATUS_TEXT, CONSENT_WORDING, daysLeft, isDriver } from "./models.js";
 import { driverIssue } from "./matching.js";
@@ -26,8 +26,7 @@ function riderBadges(r) {
     r.rideHome && badge("Ride home too", "muted"),
     r.extraPeople > 0 && badge(`+${r.extraPeople} with them`, "clay"),
     r.extraPeople > 0 && r.canSplit && badge("OK to split", "muted"),
-    r.geoSource === "neighbourhood" && badge("Location approximate", "muted"),
-    ("lat" in r && r.lat == null) && badge("Not on map", "red"),
+    ("geoSource" in r && !isConfirmed(r)) && badge("Address not confirmed", "red"),
   ].filter(Boolean).join(" ");
 }
 
@@ -92,9 +91,18 @@ export function demoPickerView(S) {
 
 // ---------------------------------------------------------------- profile form (all roles)
 
-export function profileForm(S, p = {}, { leaderEditing = false, registering = false, addingForSunday = null, leaderSelf = false } = {}) {
+export function profileForm(S, p0 = {}, { leaderEditing = false, registering = false, addingForSunday = null, leaderSelf = false } = {}) {
+  // If saving failed, show what the person typed rather than the old values.
+  const draft = S.formDraft ? Object.fromEntries(Object.entries(S.formDraft).filter(([k, v]) => v != null && k !== "picked")) : {};
+  const p = { ...p0, ...draft };
   const isDrv = p.role === "driver";
-  const hoods = NEIGHBOURHOODS.map((n) => `<option ${p.neighbourhood === n.name ? "selected" : ""}>${esc(n.name)}</option>`).join("");
+  const req = `<span class="req" aria-hidden="true">*</span>`;
+  const confirmed = isConfirmed(p0) && p.address === p0.address;
+  const addrStatus = confirmed
+    ? `<span class="ok-text">✓ Confirmed on the map${p0.neighbourhood ? ` · ${esc(p0.neighbourhood)}` : ""}</span>`
+    : p.address
+      ? `<span class="warn-text">Not confirmed yet. Pick your address from the list, or save and we'll check it.</span>`
+      : "Start typing your house number and street, then pick your address from the list.";
   const chk = (name, on, label) => `<label class="check"><input type="checkbox" name="${name}" ${on ? "checked" : ""}> <span>${label}</span></label>`;
   const roleChoice = `<input type="hidden" name="role" value="${esc(p.role || "rider")}">`;
   const driverBits = (isDrv || leaderSelf) ? `<fieldset class="field driverbits"><legend>${registering ? "Your car" : "If you drive"}</legend>
@@ -114,10 +122,19 @@ export function profileForm(S, p = {}, { leaderEditing = false, registering = fa
     </fieldset>` : "";
   return `<form data-form="profile" class="stack" ${p.id ? `data-id="${esc(p.id)}"` : ""}>
     ${roleChoice}
-    <label class="field">Full name<input name="name" required value="${esc(p.name || "")}" autocomplete="name"></label>
-    <label class="field">Phone${registering ? " (so " + (isDrv ? "riders and the leader" : "your driver") + " can reach you)" : ""}<input name="phone" type="tel" value="${esc(p.phone || "")}" autocomplete="tel"></label>
-    <label class="field">Home address (street and number)<input name="address" value="${esc(p.address || "")}" autocomplete="street-address"></label>
-    <label class="field">Neighbourhood<select name="neighbourhood"><option value="">Choose…</option>${hoods}</select></label>
+    <p class="small muted">${req} Required</p>
+    <label class="field"><span>Full name ${req}</span><input name="name" required value="${esc(p.name || "")}" autocomplete="name"></label>
+    <label class="field"><span>Mobile phone ${req}${registering ? ` <span class="small muted">(so ${isDrv ? "riders and the leader" : "your driver"} can reach you)</span>` : ""}</span><input name="phone" type="tel" required inputmode="tel" value="${esc(p.phone || "")}" autocomplete="tel" placeholder="306-555-0142"></label>
+    <div class="field addr">
+      <label for="addr-input">Home address ${req}</label>
+      <input id="addr-input" name="address" required value="${esc(p.address || "")}" autocomplete="off" placeholder="e.g. 1666 Stonebridge Blvd" aria-describedby="addr-status" aria-autocomplete="list" aria-controls="addr-suggest">
+      <div class="suggest" id="addr-suggest" role="listbox" hidden></div>
+      <p class="small muted addr-status" id="addr-status" aria-live="polite">${addrStatus}</p>
+      <input type="hidden" name="pickedAddress" value=""><input type="hidden" name="pickedLat" value=""><input type="hidden" name="pickedLng" value="">
+    </div>
+    <label class="field"><span>Postal code ${req} <span class="small muted">(filled in when you pick your address)</span></span><input name="postalCode" required value="${esc(p.postalCode || "")}" autocomplete="postal-code" placeholder="S7N 0A1" maxlength="7" style="text-transform:uppercase"></label>
+    <input type="hidden" name="neighbourhood" value="${esc(p.neighbourhood || "")}">
+    <p class="small muted hood-line">Neighbourhood: <strong class="hood-name">${esc(p.neighbourhood || "filled in from your address")}</strong></p>
     ${registering && isDrv ? "" : chk("minor", p.minor, "This rider is under 18")}
     <label class="field">${isDrv ? "Anything else we should know (optional)" : "Anything the driver should know (optional)"}<input name="notes" value="${esc(p.notes || "")}" placeholder="e.g. uses a walker"></label>
     ${driverBits}${leaderBits}
@@ -190,7 +207,7 @@ export function riderView(S) {
     return `<article class="card"><h3>${esc(fmtDate(sunday, { weekday: "long", month: "long", day: "numeric" }))}</h3>${body}</article>`;
   }).join("");
   return `<section><h2>Hi ${esc(firstName(me.name))}</h2>
-    ${me.lat == null ? banner("warn", "We couldn't place your address on the map yet. The leader will check it with you before planning.") : ""}
+    ${!isConfirmed(me) ? banner("warn", `<strong>Please confirm your home address.</strong> We can only arrange a ride once your address is confirmed on the map. ${btn("Confirm my address", "tab", { tab: "details" }, "primary")}`) : ""}
     <label class="check card soft"><input type="checkbox" data-act-change="weekly" ${me.weeklyCheckin ? "checked" : ""}> <span><strong>Check in with me every week.</strong><br><span class="small muted">We'll ask “Do you need a ride this Sunday?” If you don't answer, we won't assume you do.</span></span></label>
     ${cards}${consentBlock(S)}</section>`;
 }
@@ -221,7 +238,9 @@ export function driverView(S) {
     if (route.length) {
       body += trips.map((t) => {
         const stops = route.filter((r) => r.trip === t);
+        const leave = stops[0].departMin;
         return `<div class="route"><h4>${trips.length > 1 ? `Trip ${t}` : "Your pickups"}</h4>
+          ${leave != null ? `<p class="leave">Leave ${t > 1 ? "church" : "home"} by <strong>${esc(fmtMin(leave))}</strong></p>` : ""}
           <ol class="stops">${stops.map((s) => `<li>
             <div class="stoptime">${esc(fmtMin(s.pickupMin))}<span class="small muted">ready ${esc(fmtMin(s.readyByMin))}</span></div>
             <div><strong>${esc(s.riderName)}</strong> ${riderBadges({ minor: s.minor, rideHome: s.rideHome })}${s.seats > 1 ? ` ${badge(`${s.seats} people`, "clay")}` : ""}${s.partyTotal > s.seats ? `<br><span class="small">Part of a group of ${esc(s.partyTotal)}; the rest ride with another driver.</span>` : ""}<br>
@@ -236,6 +255,7 @@ export function driverView(S) {
     return `<article class="card"><h3>${esc(fmtDate(sunday, { weekday: "long", month: "long", day: "numeric" }))}</h3>${body}</article>`;
   }).join("");
   return `<section><h2>Hi ${esc(firstName(me.name))}</h2>${status}
+    ${!isConfirmed(me) ? banner("warn", `<strong>Please confirm your home address.</strong> You won't be given riders until it's confirmed on the map, because pickup times are worked out from it. ${btn("Confirm my address", "tab", { tab: "details" }, "primary")}`) : ""}
     <p class="small muted">${esc(me.seats)} seat(s)${me.secondTrip ? " · second trip OK" : ""}${me.vehicle ? ` · ${esc(me.vehicle)}` : ""}. Change in My details.</p>${cards}${consentBlock(S)}</section>`;
 }
 
@@ -278,6 +298,14 @@ function planTab(S) {
 
   let html = `<div class="chips">${chips}</div>`;
   if (S.churchWarning) html += banner("warn", `<strong>Church location not set.</strong> ${esc(S.churchWarning)}`);
+  else if (S.churchFound && S.mode !== "demo") {
+    const f = S.churchFound;
+    const map = `<a href="https://www.openstreetmap.org/?mlat=${esc(f.lat)}&mlon=${esc(f.lng)}#map=18/${esc(f.lat)}/${esc(f.lng)}" target="_blank" rel="noopener">check on the map</a>`;
+    html += f.pinned
+      ? `<p class="small muted">Times are worked out to the church's pinned location (${map}).</p>`
+      : banner("info", `<strong>Church location:</strong> ${esc(f.address)}${f.postcode ? `, ${esc(f.postcode)}` : ""} (${map}). Pickup times are worked back from this point. If the pin isn't at the church, put the exact latitude and longitude in js/config.js.`);
+  }
+  html += `<p class="small muted">Times use real road times plus a ${esc(S.config.matching.trafficPct ?? 20)}% safety margin and ${esc(S.config.matching.legBufferMin ?? 1)} min per drive, ${esc(S.config.matching.stopMin)} min at each house, arriving ${esc(S.config.service.arriveBeforeMin)} min before the service.</p>`;
   if (S.mode === "demo") html += banner("info", `Demo plans use a placeholder church location (${esc(S.demoChurchLabel)}).`);
   html += `<div class="tiles"><div class="tile"><b>${askingPeople}</b>people asking</div><div class="tile"><b>${seats}</b>seats offered</div>
     <div class="tile"><b>${pv?.assignments.reduce((n, a) => n + (a.seats ?? 1), 0) ?? 0}</b>seated</div><div class="tile"><b>${pv?.waitlist.reduce((n, w) => n + (w.seats ?? 1), 0) ?? 0}</b>waiting</div></div>`;
@@ -304,7 +332,7 @@ function planTab(S) {
     const d = people.get(car.driverId);
     const meta = tripMeta.get(`${car.driverId}|${car.trip}`);
     return `<article class="card car"><header><h3>${esc(d?.name || "Driver")}${car.trip > 1 ? " · trip 2" : ""}</h3>
-      <span class="small muted">${car.stops.length}/${esc(d?.seats ?? "?")} seats${d?.vehicle ? ` · ${esc(d.vehicle)}` : ""}${meta ? ` · leaves ${esc(fmtMin(meta.departMin))} · arrives ${esc(fmtMin(meta.arriveMin))}` : ""}</span></header>
+      <span class="small muted">${car.stops.length}/${esc(d?.seats ?? "?")} seats${d?.vehicle ? ` · ${esc(d.vehicle)}` : ""}${meta ? ` · leaves ${esc(fmtMin(meta.departMin))} · arrives ${esc(fmtMin(meta.arriveMin))}` : car.stops[0]?.departMin != null ? ` · leaves ${esc(fmtMin(car.stops[0].departMin))} · arrives ${esc(fmtMin(car.stops[0].arriveMin))}` : ""}</span></header>
       <ol class="stops">${car.stops.map((s) => { const r = people.get(s.riderId); return `<li><div class="stoptime">${esc(fmtMin(s.pickupMin))}<span class="small muted">ready ${esc(fmtMin(s.readyByMin))}</span></div>
         <div><strong>${esc(r?.name || "Rider")}</strong> ${riderBadges({ ...(r || {}), rideHome: asking.find((q) => q.riderId === s.riderId)?.rideHome, extraPeople: asking.find((q) => q.riderId === s.riderId)?.extraPeople, canSplit: asking.find((q) => q.riderId === s.riderId)?.canSplit })}${s.seats > 1 ? ` ${badge(`${s.seats} seats`, "gold")}` : ""}<br><span class="small">${esc(r?.address || "")}${r?.neighbourhood ? ` · ${esc(r.neighbourhood)}` : ""}</span>${asking.find((q) => q.riderId === s.riderId)?.note ? `<br><em class="small">${esc(asking.find((q) => q.riderId === s.riderId).note)}</em>` : ""}<br>${moveSelect(S, s.riderId, `${car.driverId}|${car.trip}`)}</div></li>`; }).join("")}</ol></article>`;
   }).join("") || `<p class="muted">Nobody is seated yet.</p>`;

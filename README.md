@@ -98,3 +98,14 @@ Add `?demo` to the site address (for example `https://anyanso.github.io/cgc-ride
 ## Removing a test person
 
 People tab → **Edit** on a rider or driver → **Remove** (at the bottom). It deletes them with their requests, availability and rides; any plan they were in goes back to a draft so you can redo and approve it. Leaders cannot be removed this way. Their sign-in email is kept, so if they sign in again they register again. This needs the latest `supabase/schema.sql` to be run once in the SQL Editor.
+
+## Confirmed addresses and pickup times (added 20 Oct 2026)
+
+- **Required on every profile:** full name, mobile phone (10 digits, saved as 306-555-0142), home address and postal code (saved as S7N 0A1).
+- **Addresses must be confirmed.** While typing, the app suggests real Saskatoon addresses (Photon, OpenStreetMap data). Picking one fills in the postal code and neighbourhood. On save, the address is checked once more (Nominatim) and is accepted only if that exact house number is found. Confirmed addresses are saved with `geo_source = 'verified'`.
+- **Nothing is matched or timed from a guess.** A rider or driver without a confirmed address is never placed in a car: riders go on the waiting list ("Home address not confirmed") and drivers are left out, both with the reason. People registered before this change see "Please confirm your home address" until they do. The leader can still save a phoned-in person with an unconfirmed address; they show an "Address not confirmed" badge.
+- **The church.** Pickup times are worked back from the church. Pin its exact latitude and longitude in `js/config.js` (in Google Maps, right-click the front door and copy the two numbers). Until then the app looks up the street address and shows the leader where it landed, with a map link to check.
+- **Times include a safety margin.** Each drive between two stops uses the real road time from OSRM plus 20% and 1 minute (`trafficPct`, `legBufferMin`), then 3 minutes at each house (`stopMin`), arriving 15 minutes before the service. If real road times can't be loaded, the straight-line guess gets 40% (`estimatePct`) and the leader is asked before approving.
+- **Drivers see when to leave.** Each pickup list starts with "Leave home by …" (or "Leave church by …" for a second trip).
+- **Database update:** run `supabase/update-2026-10-20-confirmed-addresses.sql` once in the Supabase SQL Editor (safe to run twice). New projects only need `schema.sql`.
+- The address services are free and need no key; they are called from each person's browser. They were not reachable from the build environment, so their answers were tested with sample replies in their documented formats (`tests/addresses.test.mjs`). Try a few real addresses after updating.

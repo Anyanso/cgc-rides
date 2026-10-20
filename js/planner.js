@@ -4,6 +4,7 @@
 import { plan, evaluate, pointsFor } from "./matching.js";
 import { buildTravel } from "./routing.js";
 import { asDriver, isDriver } from "./models.js";
+import { isConfirmed } from "./geo.js";
 
 export function matchOptions(config) {
   return {
@@ -15,25 +16,45 @@ export function matchOptions(config) {
   };
 }
 
+/**
+ * Only CONFIRMED home addresses are used for matching and timing. Anyone else is treated as
+ * "not located": riders go on the waiting list and drivers are left out, each with the reason.
+ * Nothing is ever timed from a guessed or approximate location.
+ */
+const located = (p) => (isConfirmed(p) ? p : { ...p, lat: null, lng: null, unconfirmed: true });
+
 /** Who is asking for a ride on this Sunday, who could drive. */
 export function sundayPeople(data, sunday) {
-  const byId = new Map(data.profiles.map((p) => [p.id, p]));
+  const byId = new Map(data.profiles.map((p) => [p.id, located(p)]));
   const riders = data.requests
     .filter((r) => r.sunday === sunday && r.status !== "cancelled")
     .map((r) => ({ ...byId.get(r.riderId), rideHome: r.rideHome, requestNote: r.note, extraPeople: r.extraPeople || 0, canSplit: !!r.canSplit }))
     .filter((r) => r.id);
-  const drivers = data.profiles.filter(isDriver).map((p) => asDriver(p, data.weeks, sunday));
+  const drivers = data.profiles.filter(isDriver).map((p) => asDriver(located(p), data.weeks, sunday));
   return { riders, drivers };
+}
+
+/**
+ * Road times come from OSRM (real streets, bridges and speed limits, but no traffic lights or
+ * delays). Every leg gets a safety margin on top: a percentage plus a fixed minute.
+ * If real road times are unavailable, the straight-line guess gets a bigger margin and the
+ * leader is told; such a plan must be re-drafted before it can be approved.
+ */
+export function withMargin(rawTravel, source, m = {}) {
+  const pct = source === "osrm" ? (m.trafficPct ?? 20) : (m.estimatePct ?? 40);
+  const add = m.legBufferMin ?? 1;
+  return (a, b) => (a.id === b.id ? 0 : rawTravel(a, b) * (1 + pct / 100) + add);
 }
 
 async function travelFor(people, church, config, fetchFn) {
   const pts = pointsFor({ church, ...people });
-  return buildTravel(pts, {
+  const t = await buildTravel(pts, {
     enabled: config.routing.enabled,
     baseUrl: config.routing.osrmUrl,
     ...(fetchFn ? { fetchFn } : {}),
     ...(fetchFn ? { delayMs: 0 } : {}),
   });
+  return { ...t, travel: withMargin(t.travel, t.source, config.matching) };
 }
 
 /** Draft a plan. `keep` = assignments to leave alone (used after a cancellation). */

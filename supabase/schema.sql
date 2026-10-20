@@ -28,10 +28,13 @@ create table if not exists profiles (
   role               text not null default 'rider' check (role in ('rider', 'driver', 'leader')),
   gender             text check (gender in ('F', 'M')),
   home_address       text,
-  neighbourhood      text,
+  neighbourhood      text,                                    -- filled in from the confirmed address
+  postal_code        text,
   lat                double precision,
   lng                double precision,
-  geo_source         text check (geo_source in ('address', 'neighbourhood', 'manual', 'none')),
+  -- 'verified' = confirmed on the map to the house number; the ONLY locations (with 'manual') used for matching.
+  -- 'address' / 'neighbourhood' are older, unchecked lookups kept for history; they are never matched.
+  geo_source         text check (geo_source in ('verified', 'address', 'neighbourhood', 'manual', 'none')),
   -- rider details
   minor              boolean not null default false,
   priority           boolean not null default false,          -- leader sets (e.g. seniors, no other way to church)
@@ -101,6 +104,7 @@ create table if not exists assignments (
   pickup_min    int,        -- minutes after midnight
   ready_by_min  int,
   arrive_min    int,
+  depart_min    int,        -- when the driver leaves home (trip 1) or church (trip 2)
   seats         int not null default 1 check (seats >= 1),   -- people in this car (rider plus anyone with them)
   unique (plan_id, rider_id, driver_id, trip)
 );
@@ -315,14 +319,15 @@ language sql stable security definer set search_path = public, pg_temp as $$
 $$;
 
 -- A driver's pickup list for one Sunday: ONLY their own riders, ONLY after approval.
-create or replace function my_route(p_sunday date)
-returns table (trip int, stop_order int, pickup_min int, ready_by_min int, arrive_min int,
+drop function if exists my_route(date);
+create function my_route(p_sunday date)
+returns table (trip int, stop_order int, pickup_min int, ready_by_min int, arrive_min int, depart_min int,
                rider_name text, rider_phone text, address text, neighbourhood text,
                lat double precision, lng double precision,
                minor boolean,
                rider_notes text, request_note text, ride_home boolean, extra_people int, seats int, party_total int)
 language sql stable security definer set search_path = public, pg_temp as $$
-  select a.trip, a.stop_order, a.pickup_min, a.ready_by_min, a.arrive_min,
+  select a.trip, a.stop_order, a.pickup_min, a.ready_by_min, a.arrive_min, a.depart_min,
          r.full_name, r.phone, r.home_address, r.neighbourhood, r.lat, r.lng,
          r.minor,
          r.notes, q.note, coalesce(q.ride_home, false), coalesce(q.extra_people, 0), a.seats, 1 + coalesce(q.extra_people, 0)
@@ -388,7 +393,7 @@ begin
 end $$;
 
 -- Leader saves a whole plan in one step (draft or approved). Safety rules are checked here.
--- p_assignments: [{"riderId","driverId","trip","order","pickupMin","readyByMin","arriveMin"}]
+-- p_assignments: [{"riderId","driverId","trip","order","pickupMin","readyByMin","arriveMin","departMin"}]
 -- p_waitlist:    [{"riderId","reason"}]
 create or replace function save_plan(p_sunday date, p_status text, p_summary jsonb,
                                      p_assignments jsonb, p_waitlist jsonb)
@@ -410,9 +415,10 @@ begin
   delete from assignments where plan_id = pid;
   delete from waitlist where plan_id = pid;
 
-  insert into assignments (plan_id, rider_id, driver_id, trip, stop_order, pickup_min, ready_by_min, arrive_min, seats)
+  insert into assignments (plan_id, rider_id, driver_id, trip, stop_order, pickup_min, ready_by_min, arrive_min, depart_min, seats)
   select pid, (e ->> 'riderId')::uuid, (e ->> 'driverId')::uuid, coalesce((e ->> 'trip')::int, 1),
          coalesce((e ->> 'order')::int, 0), (e ->> 'pickupMin')::int, (e ->> 'readyByMin')::int, (e ->> 'arriveMin')::int,
+         (e ->> 'departMin')::int,
          greatest(coalesce((e ->> 'seats')::int, 1), 1)
   from jsonb_array_elements(coalesce(p_assignments, '[]'::jsonb)) e;
 

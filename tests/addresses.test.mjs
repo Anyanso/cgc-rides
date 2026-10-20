@@ -1,0 +1,115 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { normalizePhone, normalizePostal, houseNumberOf, suggestAddresses, confirmAddress, isConfirmed } from "../js/geo.js";
+import { draftPlan, withMargin } from "../js/planner.js";
+import { CONFIG } from "../js/config.js";
+
+// Sample answers in the documented Photon / Nominatim formats. These check our reading of
+// them; they do NOT prove the real services answer exactly like this.
+const reply = (body, ok = true) => async () => ({ ok, status: ok ? 200 : 500, json: async () => body });
+
+test("phone numbers are required to be 10 Canadian digits and are tidied", () => {
+  assert.equal(normalizePhone("(306) 555-0142"), "306-555-0142");
+  assert.equal(normalizePhone("+1 306 555 0142"), "306-555-0142");
+  assert.equal(normalizePhone("555-0142"), null);
+  assert.equal(normalizePhone("abc"), null);
+});
+
+test("postal codes must look like S7N 0A1 and are tidied", () => {
+  assert.equal(normalizePostal("s7t0j1"), "S7T 0J1");
+  assert.equal(normalizePostal("S7T-0J1"), "S7T 0J1");
+  assert.equal(normalizePostal("D7T 0J1"), null);
+  assert.equal(normalizePostal("S7T 0J"), null);
+});
+
+test("house numbers are read from the start of an address, including unit-house", () => {
+  assert.equal(houseNumberOf("1666 Stonebridge Blvd"), "1666");
+  assert.equal(houseNumberOf("12-345 Main St"), "345");
+  assert.equal(houseNumberOf("Stonebridge Blvd"), null);
+});
+
+test("suggestions keep only exact houses inside Saskatoon, with postal code and neighbourhood", async () => {
+  const photon = { features: [
+    { geometry: { coordinates: [-106.6213, 52.0895] }, properties: { housenumber: "1666", street: "Stonebridge Boulevard", postcode: "s7t0j1", district: "Stonebridge", countrycode: "CA" } },
+    { geometry: { coordinates: [-106.62, 52.09] }, properties: { street: "Stonebridge Boulevard", countrycode: "CA" } },                      // street only: dropped
+    { geometry: { coordinates: [-104.6, 50.45] }, properties: { housenumber: "1666", street: "Albert St", countrycode: "CA" } },            // Regina: dropped
+  ] };
+  const list = await suggestAddresses("1666 Stonebridge", { fetchFn: reply(photon) });
+  assert.equal(list.length, 1);
+  assert.deepEqual({ ...list[0], label: undefined }, { address: "1666 Stonebridge Boulevard", label: undefined, postcode: "S7T 0J1", neighbourhood: "Stonebridge", lat: 52.0895, lng: -106.6213 });
+  assert.deepEqual(await suggestAddresses("Stonebridge", { fetchFn: reply(photon) }), [], "no house number typed yet: no lookups");
+  assert.deepEqual(await suggestAddresses("1666 Stonebridge", { fetchFn: async () => { throw new Error("offline"); } }), []);
+});
+
+test("an address is confirmed only when that exact house number is found", async () => {
+  const hit = (house) => [{ lat: "52.0895", lon: "-106.6213", address: { house_number: house, road: "Stonebridge Boulevard", suburb: "Stonebridge", postcode: "S7T 0J1" } }];
+  const ok = await confirmAddress("1666 Stonebridge Blvd", { fetchFn: reply(hit("1666")) });
+  assert.equal(ok.ok, true);
+  assert.equal(ok.address, "1666 Stonebridge Boulevard");
+  assert.equal(ok.postcode, "S7T 0J1");
+  assert.equal(ok.neighbourhood, "Stonebridge");
+
+  const wrong = await confirmAddress("1666 Stonebridge Blvd", { fetchFn: reply(hit("1660")) });
+  assert.equal(wrong.ok, false);
+  assert.match(wrong.reason, /not house number 1666/);
+
+  const street = await confirmAddress("1666 Stonebridge Blvd", { fetchFn: reply([{ lat: "52.09", lon: "-106.62", address: { road: "Stonebridge Boulevard" } }]) });
+  assert.equal(street.ok, false, "a street with no house is never good enough");
+
+  const none = await confirmAddress("1666 Nowhere Rd", { fetchFn: reply([]) });
+  assert.equal(none.ok, false);
+  assert.match(none.reason, /couldn't find/);
+
+  const noNumber = await confirmAddress("College Drive", { fetchFn: reply(hit("1")) });
+  assert.match(noNumber.reason, /house number/);
+});
+
+test("Jo's case: an unconfirmed or approximate address is never matched or timed", async () => {
+  const church = { lat: 52.13, lng: -106.66 };
+  const sunday = "2026-10-25";
+  const driver = { id: "d1", name: "Dee", role: "driver", status: "cleared", seats: 3, drivesEveryWeek: true, lat: 52.09, lng: -106.62, geoSource: "verified" };
+  const jo = { id: "jo", name: "Jo", role: "rider", lat: 52.0872, lng: -106.6244, geoSource: "neighbourhood", address: "1666" };   // guessed from the neighbourhood
+  const ana = { id: "ana", name: "Ana", role: "rider", lat: 52.095, lng: -106.63, geoSource: "verified", address: "12 Real St" };
+  const data = {
+    profiles: [driver, jo, ana], weeks: [],
+    requests: [{ riderId: "jo", sunday, status: "requested" }, { riderId: "ana", sunday, status: "requested" }],
+  };
+  const p = await draftPlan({ data, sunday, church, config: CONFIG, fetchFn: async () => { throw new Error("offline"); } });
+  assert.ok(!p.assignments.some((a) => a.riderId === "jo"), "Jo must not be seated");
+  assert.match(p.waitlist.find((w) => w.riderId === "jo").reason, /not confirmed/);
+  assert.ok(p.assignments.some((a) => a.riderId === "ana"));
+
+  const unconfirmedDriver = { ...driver, geoSource: "address" }; // old, unchecked lookup
+  const p2 = await draftPlan({ data: { ...data, profiles: [unconfirmedDriver, ana] }, sunday, church, config: CONFIG, fetchFn: async () => { throw new Error("offline"); } });
+  assert.equal(p2.assignments.length, 0);
+  assert.match(p2.excludedDrivers[0].reason, /not confirmed/);
+  assert.equal(isConfirmed(ana), true);
+  assert.equal(isConfirmed(jo), false);
+});
+
+test("drive times get a safety margin; bigger when real road times are unavailable", () => {
+  const raw = () => 10;
+  const a = { id: "a" }, b = { id: "b" };
+  assert.equal(withMargin(raw, "osrm", { trafficPct: 20, legBufferMin: 1 })(a, b), 13);
+  assert.equal(withMargin(raw, "estimate", { estimatePct: 40, legBufferMin: 1 })(a, b), 15);
+  assert.equal(withMargin(raw, "osrm", {})(a, a), 0);
+});
+
+test("every seated rider carries the driver's leave time, which is before the first pickup", async () => {
+  const church = { lat: 52.13, lng: -106.66 };
+  const sunday = "2026-10-25";
+  const driver = { id: "d1", name: "Dee", role: "driver", status: "cleared", seats: 3, drivesEveryWeek: true, lat: 52.09, lng: -106.62, geoSource: "verified" };
+  const riders = [
+    { id: "r1", name: "One", role: "rider", lat: 52.095, lng: -106.63, geoSource: "verified" },
+    { id: "r2", name: "Two", role: "rider", lat: 52.105, lng: -106.64, geoSource: "verified" },
+  ];
+  const data = { profiles: [driver, ...riders], weeks: [], requests: riders.map((r) => ({ riderId: r.id, sunday, status: "requested" })) };
+  const p = await draftPlan({ data, sunday, church, config: CONFIG, fetchFn: async () => { throw new Error("offline"); } });
+  assert.equal(p.assignments.length, 2);
+  const first = Math.min(...p.assignments.map((a) => a.pickupMin));
+  for (const a of p.assignments) {
+    assert.equal(typeof a.departMin, "number");
+    assert.ok(a.departMin <= first, "driver leaves before the first pickup");
+    assert.ok(a.arriveMin > Math.max(...p.assignments.map((x) => x.pickupMin)));
+  }
+});

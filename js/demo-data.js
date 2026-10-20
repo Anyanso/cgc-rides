@@ -1,6 +1,6 @@
 // Sample people for DEMO mode. Everyone here is fictional.
-// Addresses are placeholders and locations are approximate neighbourhood centres, so the
-// demo shows how matching behaves, not where real people live.
+// Addresses are placeholders and locations are near neighbourhood centres (marked as confirmed
+// so the demo can be planned). The demo shows how matching behaves, not where real people live.
 
 import { neighbourhoodCentre } from "./geo.js";
 import { nextSundays, toISO } from "./dates.js";
@@ -23,7 +23,7 @@ export function makeDemoState(now = new Date()) {
     return {
       id, userId: id, email: `${id}@demo.invalid`, name, phone: `306-555-01${String(n).padStart(2, "0")}`,
       role: "rider", gender: null, address: `Sample address, ${hood}`, neighbourhood: hood,
-      lat: c ? c.lat + jitter(n, 1) : null, lng: c ? c.lng + jitter(n, 2) : null, geoSource: c ? "neighbourhood" : "none",
+      lat: c ? c.lat + jitter(n, 1) : null, lng: c ? c.lng + jitter(n, 2) : null, geoSource: c ? "verified" : "none", postalCode: null,
       minor: false, priority: false,
       weeklyCheckin: false, notes: null, seats: 0, drivesEveryWeek: false, secondTrip: false, vehicle: null,
       status: "none", licenceOk: false, insuranceOk: false, policeCheckExpiry: null,

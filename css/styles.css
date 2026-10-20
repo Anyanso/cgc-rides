@@ -75,3 +75,14 @@ input[type=checkbox],input[type=radio]{width:auto;min-height:0;margin-right:.45r
 summary{cursor:pointer;font-weight:600}
 @media (max-width:420px){.tiles{grid-template-columns:repeat(2,1fr)}}
 @media print{.top,.demobar,.tabs,.btn,footer{display:none}}
+/* required marks, address search */
+.req{color:var(--red);font-weight:700}
+.addr{position:relative}
+.suggest{position:absolute;left:0;right:0;top:calc(1.5rem + 46px);z-index:20;background:var(--paper);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow),0 10px 28px rgba(36,21,18,.14);overflow:hidden}
+.suggestion{display:block;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--line);padding:.7rem .85rem;font:inherit;color:inherit;cursor:pointer;min-height:44px}
+.suggestion:last-child{border-bottom:0}
+.suggestion:hover,.suggestion:focus-visible{background:var(--soft);outline:none}
+.suggestion small{display:block;color:var(--muted)}
+.suggest .none{padding:.7rem .85rem;color:var(--muted);font-size:.9rem}
+.ok-text{color:var(--ok);font-weight:600} .warn-text{color:var(--clay);font-weight:600}
+.leave{margin:.2rem 0 .6rem;font-size:1.05rem}
