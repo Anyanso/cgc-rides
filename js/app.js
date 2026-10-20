@@ -155,7 +155,13 @@ async function load() {
   S.services = await store.services();
   setServices(S.services);
   S.sundays = upcomingDays(CONFIG.weeksAhead, new Date());
-  S.me = await store.getMe();
+  const wasRole = S.me && `${S.me.role}/${!!S.me.isSupervisor}`;
+  S.me = await store.getMe({ fresh: true });
+  // Someone changed this person's team role (made them a leader, or moved them back).
+  if (wasRole && S.me && wasRole !== `${S.me.role}/${!!S.me.isSupervisor}`) {
+    S.tab = null; S.planView = null; S.data = null;
+    S.roleNote = S.me.role === "leader" ? (S.me.isSupervisor ? "You are now the supervisor." : `You are now ${S.me.leaderTitle === "Assistant leader" ? "an assistant leader" : "a leader"}: the leader screens are open to you.`) : `Your role is now ${S.me.role}.`;
+  }
   S.appUrl = location.href.split("#")[0].split("?")[0];
   if (!S.me) return;
   await resolveChurch();
@@ -418,6 +424,16 @@ const actions = {
   },
   edit(d) { S.editing = d.id; S.formDraft = null; },
   "edit-cancel"() { S.editing = null; S.formDraft = null; },
+  async "team-role"(d) {
+    const p = S.data.profiles.find((x) => x.id === d.id);
+    if (!p) return;
+    const words = { leader: "Leader", assistant: "Assistant leader", driver: "a driver", rider: "a rider" }[d.role];
+    const back = d.role === "driver" || d.role === "rider";
+    if (!confirm(back ? `Move ${p.name} back to ${words}? They will no longer see the leader screens.` : `Make ${p.name} ${words}?`)) return;
+    await store.setTeamRole(d.id, d.role);
+    await reload();
+    say(back ? `${p.name} is now ${words}.` : `${p.name} is now ${words}. They'll see the leader screens next time they open the app.`);
+  },
   async "remove-person"(d) {
     const p = S.data.profiles.find((x) => x.id === d.id);
     if (!p) return;
@@ -527,6 +543,32 @@ async function onSubmit(form) {
   if (kind === "help") { await findHelpers(form); return; }
   if (kind === "service") { await saveServiceForm(form); return; }
   if (kind === "help-ask") { await askInApp(form); return; }
+  if (kind === "team-add") {
+    const f = new FormData(form);
+    const p = S.data.profiles.find((x) => x.id === f.get("person"));
+    if (!p) throw new Error("Choose a person first.");
+    const role = f.get("role") === "assistant" ? "assistant" : "leader";
+    const words = role === "leader" ? "Leader" : "Assistant leader";
+    if (!confirm(`Make ${p.name} ${words}? They'll be able to see everyone's details and manage rides.`)) return;
+    await store.setTeamRole(p.id, role);
+    await reload();
+    say(`${p.name} is now ${words}. They'll see the leader screens next time they open the app.`);
+    return;
+  }
+  if (kind === "handover") {
+    const f = new FormData(form);
+    const p = S.data.profiles.find((x) => x.id === f.get("person"));
+    if (!p) throw new Error("Choose who to hand over to.");
+    const typed = String(f.get("confirmName") || "").trim().toLowerCase().replace(/\s+/g, " ");
+    if (typed !== p.name.trim().toLowerCase().replace(/\s+/g, " ")) throw new Error(`To confirm, type ${p.name} exactly as shown.`);
+    const myRole = String(f.get("myRole") || "rider");
+    if (!confirm(`Hand the supervisor role to ${p.name}? Only they will be able to change the team after this.`)) return;
+    await store.handOverSupervisor(p.id, myRole);
+    S.tab = null; S.planView = null;
+    await reload();
+    say(`${p.name} is now the supervisor. Thank you for leading!`);
+    return;
+  }
   if (kind === "profile") {
     const leaderEditing = S.me?.role === "leader" && S.editing;
     const raw = readProfile(form);
@@ -722,7 +764,7 @@ async function refreshNow({ manual = false } = {}) {
     await load();
     S.lastSync = new Date();
     const msg = whatChanged(before, snapshot());
-    if (msg) S.toast = msg; else if (manual) S.toast = "You're up to date.";
+    if (S.roleNote) { S.toast = S.roleNote; S.roleNote = null; } else if (msg) S.toast = msg; else if (manual) S.toast = "You're up to date.";
   } catch (err) {
     console.error(err);
     if (manual) S.error = "Couldn't check for updates. Check your internet connection and try again.";

@@ -137,7 +137,47 @@ export function createDemoStore({ now = () => new Date() } = {}) {
     // ---- leader
     async leaderData() {
       need(isLeader(), "Only the transport leader can see this.");
-      return fresh({ profiles: db.profiles, requests: db.requests, weeks: db.weeks, plans: db.plans, alerts: db.alerts, consentLog: db.consentLog, helpRequests: db.help });
+      return fresh({ profiles: db.profiles, requests: db.requests, weeks: db.weeks, plans: db.plans, alerts: db.alerts, consentLog: db.consentLog, helpRequests: db.help, teamLog: db.teamLog });
+    },
+
+    // ---- team (same rules as the database: only the supervisor; two leaders besides them at most)
+    async setTeamRole(id, role) {
+      const m = me();
+      need(m?.isSupervisor, "Only the supervisor can change who leads.");
+      need(["leader", "assistant", "driver", "rider"].includes(role), "Choose leader, assistant leader, driver or rider.");
+      const t = byId(id);
+      need(t, "That person was not found.");
+      need(t.id !== m.id, "To change your own role, hand over the supervisor role first.");
+      need(t.userId, `${t.name} has never signed in to the app, so they can't lead yet. Ask them to sign in once first.`);
+      let label;
+      if (role === "leader" || role === "assistant") {
+        need(db.profiles.filter((p) => p.role === "leader" && !p.isSupervisor && p.id !== t.id).length < 2, "There are already two leaders. Move one of them back to driver or rider first.");
+        label = role === "leader" ? "Leader" : "Assistant leader";
+        Object.assign(t, { role: "leader", leaderTitle: label });
+      } else {
+        label = role === "driver" ? "Driver" : "Rider";
+        Object.assign(t, { role, leaderTitle: null });
+        if (role === "driver" && t.status === "none") t.status = "pending";
+      }
+      db.teamLog.unshift({ at: now().toISOString(), actorName: m.name, targetName: t.name, change: `made ${t.name} ${label.toLowerCase()}` });
+      return label;
+    },
+    async handOverSupervisor(id, myRole) {
+      const m = me();
+      need(m?.isSupervisor, "Only the supervisor can hand over the role.");
+      need(["leader", "assistant", "driver", "rider"].includes(myRole), "Choose what you will be: leader, assistant leader, driver or rider.");
+      const t = byId(id);
+      need(t && t.id !== m.id, "Choose someone else to hand over to.");
+      need(t.role === "leader", `Make ${t.name} a leader first, then hand over.`);
+      if (myRole === "leader" || myRole === "assistant") {
+        need(db.profiles.filter((p) => p.role === "leader" && !p.isSupervisor && p.id !== m.id && p.id !== t.id).length < 2, "There are already two leaders, so you can't stay a leader. Choose driver or rider.");
+      }
+      Object.assign(t, { isSupervisor: true, leaderTitle: "Supervisor" });
+      m.isSupervisor = false;
+      if (myRole === "leader" || myRole === "assistant") m.leaderTitle = myRole === "leader" ? "Leader" : "Assistant leader";
+      else { Object.assign(m, { role: myRole, leaderTitle: null }); if (myRole === "driver" && m.status === "none") m.status = "pending"; }
+      db.teamLog.unshift({ at: now().toISOString(), actorName: m.name, targetName: t.name, change: `handed the supervisor role to ${t.name}` });
+      return "ok";
     },
 
     // ---- last-minute requests (same rules as the database: first yes wins; address only for the winner)
@@ -200,6 +240,11 @@ export function createDemoStore({ now = () => new Date() } = {}) {
     },
     async saveProfile(p) {
       need(isLeader(), "Only the transport leader can do this.");
+      // As in the database, team roles change only through setTeamRole / handOverSupervisor.
+      p = { ...p }; delete p.isSupervisor; delete p.leaderTitle;
+      const old = p.id && byId(p.id);
+      if (old && (old.role === "leader" || p.role === "leader")) p.role = old.role;
+      if (!old && p.role === "leader") p.role = "rider";
       if (p.id && byId(p.id)) Object.assign(byId(p.id), p);
       else {
         const id = `p-${db.profiles.length + 1}`;

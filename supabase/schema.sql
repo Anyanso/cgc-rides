@@ -178,6 +178,26 @@ create table if not exists services (
 alter table ride_requests drop constraint if exists ride_requests_sunday_check;
 alter table plans drop constraint if exists plans_sunday_check;
 
+-- ---------------------------------------------------------------- team roles
+-- One SUPERVISOR (a leader who can also change who leads, and hand the role over) and at most two
+-- other leaders ("Leader" and "Assistant leader"). Roles change only through set_team_role() and
+-- hand_over_supervisor() below, which only the supervisor can use, and every change is logged.
+alter table profiles add column if not exists is_supervisor boolean not null default false;
+alter table profiles add column if not exists leader_title text;   -- 'Supervisor', 'Leader' or 'Assistant leader'
+alter table profiles drop constraint if exists profiles_supervisor_is_leader;
+alter table profiles add constraint profiles_supervisor_is_leader check (not is_supervisor or role = 'leader');
+create unique index if not exists profiles_one_supervisor on profiles ((true)) where is_supervisor;
+
+create table if not exists team_log (
+  id          bigint generated always as identity primary key,
+  at          timestamptz not null default now(),
+  actor       uuid references profiles (id) on delete set null,
+  actor_name  text,
+  target      uuid references profiles (id) on delete set null,
+  target_name text,
+  change      text not null
+);
+
 create index if not exists assignments_driver_idx on assignments (driver_id);
 create index if not exists requests_sunday_idx on ride_requests (sunday);
 
@@ -202,8 +222,25 @@ $$;
 create or replace function protect_profile() returns trigger
 language plpgsql set search_path = public, pg_temp as $$
 begin
-  -- The SQL editor / server admin and the leader may change anything.
-  if current_user in ('postgres', 'supabase_admin', 'service_role') or is_leader() then
+  -- The SQL editor / server admin may change anything. (The team functions below run as the
+  -- owner, so they pass here too; nobody else can change a team role.)
+  if current_user in ('postgres', 'supabase_admin', 'service_role') then
+    return new;
+  end if;
+
+  -- Team roles are protected from everyone, leaders included.
+  if tg_op = 'INSERT' then
+    new.is_supervisor := false;
+    new.leader_title := null;
+    if new.role = 'leader' then new.role := 'rider'; end if;
+  else
+    new.is_supervisor := old.is_supervisor;
+    new.leader_title := old.leader_title;
+    if old.role = 'leader' or new.role = 'leader' then new.role := old.role; end if;
+  end if;
+
+  -- Leaders may change everything else.
+  if is_leader() then
     return new;
   end if;
 
@@ -355,6 +392,10 @@ drop policy if exists services_read on services;
 drop policy if exists services_leader on services;
 create policy services_read   on services for select using (auth.uid() is not null);
 create policy services_leader on services for all using (is_leader()) with check (is_leader());
+
+alter table team_log enable row level security;
+drop policy if exists team_log_read on team_log;
+create policy team_log_read on team_log for select using (is_leader());
 
 -- Leader-only tables. Everyone else reaches this data only through the functions below.
 drop policy if exists plans_leader on plans;
@@ -570,6 +611,70 @@ begin
   return pid;
 end $$;
 
+create or replace function is_supervisor() returns boolean
+language sql stable security definer set search_path = public, pg_temp as $$
+  select exists (select 1 from profiles where user_id = auth.uid() and is_supervisor and role = 'leader')
+$$;
+
+-- The supervisor makes someone Leader / Assistant leader, or moves them back to driver or rider.
+-- A driver keeps their car details and checks. At most two leaders besides the supervisor.
+create or replace function set_team_role(p_profile uuid, p_role text)
+returns text
+language plpgsql security definer set search_path = public, pg_temp as $$
+declare me profiles; t profiles; n int; label text;
+begin
+  select * into me from profiles where user_id = auth.uid();
+  if not found or not me.is_supervisor then raise exception 'Only the supervisor can change who leads.'; end if;
+  if p_role not in ('leader', 'assistant', 'driver', 'rider') then raise exception 'Choose leader, assistant leader, driver or rider.'; end if;
+  select * into t from profiles where id = p_profile for update;
+  if not found then raise exception 'That person was not found.'; end if;
+  if t.id = me.id then raise exception 'To change your own role, hand over the supervisor role first.'; end if;
+  if t.user_id is null then raise exception '% has never signed in to the app, so they can''t lead yet. Ask them to sign in once first.', t.full_name; end if;
+  if p_role in ('leader', 'assistant') then
+    select count(*) into n from profiles where role = 'leader' and not is_supervisor and id <> t.id;
+    if n >= 2 then raise exception 'There are already two leaders. Move one of them back to driver or rider first.'; end if;
+    label := case when p_role = 'leader' then 'Leader' else 'Assistant leader' end;
+    update profiles set role = 'leader', leader_title = label where id = t.id;
+  else
+    label := case when p_role = 'driver' then 'Driver' else 'Rider' end;
+    update profiles set role = p_role, leader_title = null,
+           driver_status = case when p_role = 'driver' and driver_status = 'none' then 'pending' else driver_status end
+     where id = t.id;
+  end if;
+  insert into team_log (actor, actor_name, target, target_name, change)
+  values (me.id, me.full_name, t.id, t.full_name, 'made ' || t.full_name || ' ' || lower(label));
+  return label;
+end $$;
+
+-- The supervisor hands the role to one of the leaders, and chooses what they become themselves.
+create or replace function hand_over_supervisor(p_profile uuid, p_my_role text)
+returns text
+language plpgsql security definer set search_path = public, pg_temp as $$
+declare me profiles; t profiles; n int;
+begin
+  select * into me from profiles where user_id = auth.uid();
+  if not found or not me.is_supervisor then raise exception 'Only the supervisor can hand over the role.'; end if;
+  if p_my_role not in ('leader', 'assistant', 'driver', 'rider') then raise exception 'Choose what you will be: leader, assistant leader, driver or rider.'; end if;
+  select * into t from profiles where id = p_profile for update;
+  if not found or t.id = me.id then raise exception 'Choose someone else to hand over to.'; end if;
+  if t.role <> 'leader' then raise exception 'Make % a leader first, then hand over.', t.full_name; end if;
+
+  update profiles set is_supervisor = false where id = me.id;
+  update profiles set is_supervisor = true, leader_title = 'Supervisor' where id = t.id;
+  if p_my_role in ('leader', 'assistant') then
+    select count(*) into n from profiles where role = 'leader' and not is_supervisor and id <> me.id;
+    if n >= 2 then raise exception 'There are already two leaders, so you can''t stay a leader. Choose driver or rider.'; end if;
+    update profiles set leader_title = case when p_my_role = 'leader' then 'Leader' else 'Assistant leader' end where id = me.id;
+  else
+    update profiles set role = p_my_role, leader_title = null,
+           driver_status = case when p_my_role = 'driver' and driver_status = 'none' then 'pending' else driver_status end
+     where id = me.id;
+  end if;
+  insert into team_log (actor, actor_name, target, target_name, change)
+  values (me.id, me.full_name, t.id, t.full_name, 'handed the supervisor role to ' || t.full_name);
+  return 'ok';
+end $$;
+
 -- ---------------------------------------------------------------- removing a person
 -- The leader can remove a rider or driver (for example a test name). Their requests, weekly
 -- availability, ride assignments, waitlist entries, alerts and consent records go with them.
@@ -612,9 +717,12 @@ grant execute on all functions in schema public to authenticated;
 -- 1) Sign in to the app once with your email (this creates your login).
 -- 2) Run this in the SQL editor, with your own email and name:
 --
---   insert into profiles (user_id, email, full_name, role)
---   select id, email, 'Your Name', 'leader' from auth.users where email = 'you@example.com'
---   on conflict (user_id) do update set role = 'leader';
+--   insert into profiles (user_id, email, full_name, role, is_supervisor, leader_title)
+--   select id, email, 'Your Name', 'leader', true, 'Supervisor' from auth.users where email = 'you@example.com'
+--   on conflict (user_id) do update set role = 'leader', is_supervisor = true, leader_title = 'Supervisor';
+--
+-- That first person is the SUPERVISOR. From then on, leaders are added and removed in the app
+-- (People tab -> Team), and the supervisor role is handed over there too. No SQL needed.
 --
 -- To hand over to a new leader later: do the same for them, then set your own role back to 'rider'.
 -- The leader's own phone number lives on their profile; nothing in the code needs changing.

@@ -58,9 +58,10 @@ export async function createLiveStore(config, { createClient } = {}) {
     async signOut() { await sb.auth.signOut(); user = null; cachedMe = undefined; },
     sundays() { return nextSundays(config.weeksAhead); },
 
-    async getMe() {
+    /** fresh = re-read from the database (each refresh does, so a role change shows within 30 seconds). */
+    async getMe({ fresh = false } = {}) {
       if (!user) return null;
-      if (cachedMe !== undefined) return cachedMe;
+      if (cachedMe !== undefined && !fresh) return cachedMe;
       const res = await from("profiles").select("*").eq("user_id", user.id).maybeSingle();
       fail(res);
       cachedMe = profileFromRow(res.data);
@@ -125,7 +126,7 @@ export async function createLiveStore(config, { createClient } = {}) {
     },
     async leaderData() {
       const since = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-      const [pr, rq, wk, pl, as, wl, al, cl, hr, ha] = await Promise.all([
+      const [pr, rq, wk, pl, as, wl, al, cl, hr, ha, tl] = await Promise.all([
         from("profiles").select("*").order("full_name"),
         from("ride_requests").select("*").gte("sunday", since),
         from("driver_weeks").select("*").gte("sunday", since),
@@ -137,6 +138,7 @@ export async function createLiveStore(config, { createClient } = {}) {
         from("consent_log").select("*").order("at", { ascending: false }).limit(200),
         from("help_requests").select("*").gte("sunday", since).neq("status", "cancelled").order("created_at", { ascending: false }),
         from("help_asks").select("*"),
+        from("team_log").select("*").order("at", { ascending: false }).limit(50),
       ]);
       for (const r of [pr, rq, wk, pl, as, wl, al, cl]) fail(r);
       // Last-minute requests need the 20 Oct (afternoon) database update; until then, there are none.
@@ -162,8 +164,14 @@ export async function createLiveStore(config, { createClient } = {}) {
         alerts: al.data.map((a) => ({ id: a.id, kind: a.kind, sunday: a.sunday, driverId: a.driver_id, riderId: a.rider_id, message: a.message, resolved: a.resolved, createdAt: a.created_at })),
         consentLog: cl.data.map((c) => ({ profileId: c.profile_id, kind: c.kind, wording: c.wording, at: c.at })),
         helpRequests,
+        // Team changes need the 20 Oct (evening) database update; until then, none.
+        teamLog: tl.error ? [] : tl.data.map((t) => ({ at: t.at, actorName: t.actor_name, targetName: t.target_name, change: t.change })),
       };
     },
+    /** Supervisor only: make someone 'leader' / 'assistant', or move them back to 'driver' / 'rider'. */
+    async setTeamRole(id, role) { return rpc("set_team_role", { p_profile: id, p_role: role }); },
+    /** Supervisor only: hand the supervisor role to a leader; myRole is what the supervisor becomes. */
+    async handOverSupervisor(id, myRole) { return rpc("hand_over_supervisor", { p_profile: id, p_my_role: myRole }); },
     async savePlan(sunday, status, summary, assignments, waitlist) {
       await rpc("save_plan", { p_sunday: sunday, p_status: status, p_summary: summary || {}, p_assignments: assignments, p_waitlist: waitlist || [] });
     },

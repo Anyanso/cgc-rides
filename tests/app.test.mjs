@@ -195,3 +195,39 @@ test("demo: a leader can also drive: appears as a driver, sees their own pickups
   assert.equal(route.length, mine.length);
   assert.equal(await c.store.cantMakeIt(c.sunday), mine.length);
 });
+
+test("team: the supervisor makes leaders (two at most), moves them back, and hands over", async () => {
+  const store = createDemoStore();
+  store.viewAs("leader");
+  await store.setTeamRole("d-grace", "leader");
+  await store.setTeamRole("r-isaac", "assistant");
+  await assert.rejects(() => store.setTeamRole("d-daniel", "assistant"), /already two leaders/);
+  await assert.rejects(() => store.setTeamRole("leader", "rider"), /hand over/);
+  // A leader who isn't the supervisor can't change the team, even through a profile edit.
+  store.viewAs("d-grace");
+  assert.ok(await store.leaderData());
+  await assert.rejects(() => store.setTeamRole("r-isaac", "rider"), /Only the supervisor/);
+  await store.saveProfile({ id: "r-isaac", role: "rider", isSupervisor: true });
+  await store.saveProfile({ id: "d-daniel", role: "leader" });
+  store.viewAs("leader");
+  let ppl = (await store.leaderData()).profiles;
+  const get = (id) => ppl.find((p) => p.id === id);
+  assert.equal(get("r-isaac").role, "leader");
+  assert.equal(get("r-isaac").isSupervisor, undefined);
+  assert.equal(get("d-daniel").role, "driver");
+  // Moving Grace back keeps her a cleared driver.
+  await store.setTeamRole("d-grace", "driver");
+  ppl = (await store.leaderData()).profiles;
+  assert.deepEqual([get("d-grace").role, get("d-grace").status, get("d-grace").leaderTitle], ["driver", "cleared", null]);
+  // Hand over to Isaac; the old supervisor becomes a driver and loses the leader screens.
+  await assert.rejects(() => store.handOverSupervisor("d-daniel", "rider"), /leader first/);
+  await store.handOverSupervisor("r-isaac", "driver");
+  const me = await store.getMe();
+  assert.deepEqual([me.role, !!me.isSupervisor, me.status], ["driver", false, "pending"]);
+  await assert.rejects(() => store.leaderData(), /Only the transport leader/);
+  store.viewAs("r-isaac");
+  const d = await store.leaderData();
+  assert.equal(d.profiles.find((p) => p.id === "r-isaac").isSupervisor, true);
+  assert.deepEqual(d.teamLog.map((t) => t.change).reverse(), [
+    "made Grace Adeyemi leader", "made Isaac Moyo assistant leader", "made Grace Adeyemi driver", "handed the supervisor role to Isaac Moyo"]);
+});

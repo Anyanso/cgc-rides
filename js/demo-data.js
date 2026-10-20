@@ -34,7 +34,7 @@ export function makeDemoState(now = new Date()) {
     base(id, name, hood, { role: "driver", status: "cleared", licenceOk: true, insuranceOk: true, policeCheckExpiry: inDays(300), ...extra });
 
   const profiles = [
-    base("leader", "Transport Leader (demo)", "Nutana", { role: "leader", phone: "306-555-0100", gender: "F" }),
+    base("leader", "Transport Leader (demo)", "Nutana", { role: "leader", isSupervisor: true, leaderTitle: "Supervisor", phone: "306-555-0100", gender: "F" }),
     driver("d-grace", "Grace Adeyemi", "Stonebridge", { gender: "F", seats: 4, drivesEveryWeek: true, vehicle: "Silver minivan", textsConsentAt: now.toISOString() }),
     driver("d-daniel", "Daniel Okafor", "Evergreen", { gender: "M", seats: 3, drivesEveryWeek: true, vehicle: "Grey SUV" }),
     driver("d-ruth", "Ruth Mensah", "Confederation Park", { gender: "F", seats: 3, secondTrip: true, vehicle: "Blue sedan" }),
@@ -67,5 +67,5 @@ export function makeDemoState(now = new Date()) {
     { driverId: "d-ruth", sunday: first, available: true },
     { driverId: "d-daniel", sunday: sundays[1], available: false, note: "Away" },
   ];
-  return { sundays, profiles, requests, weeks, plans: {}, alerts: [], consentLog: [], help: [], services: [] };
+  return { sundays, profiles, requests, weeks, plans: {}, alerts: [], consentLog: [], help: [], services: [], teamLog: [] };
 }

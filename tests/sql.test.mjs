@@ -342,3 +342,71 @@ test("services: special days take requests, a Sunday can be called off, a cutoff
   assert.ok((await as("s1", () => q("select * from services"))).length >= 4);
   await assert.rejects(() => as("s1", () => db.query("insert into services (service_date) values ($1)", [day(50)])), /row-level security/);
 });
+
+test("team: only the supervisor changes who leads; two leaders at most; leaders can't promote anyone", async () => {
+  Object.assign(U, { t1: "00000000-0000-0000-0000-0000000000b1", t2: "00000000-0000-0000-0000-0000000000b2", t3: "00000000-0000-0000-0000-0000000000b3" });
+  const ids = {};
+  for (const [k, name, role] of [["t1", "Tom Driver", "driver"], ["t2", "Tia Rider", "rider"], ["t3", "Ted Rider", "rider"]]) {
+    await db.query("insert into auth.users (id,email) values ($1,$2)", [U[k], `${k}@example.com`]);
+    await db.query("insert into profiles (user_id,full_name,role,seats) values ($1,$2,$3,3)", [U[k], name, role]);
+    ids[k] = (await q("select id from profiles where user_id=$1", [U[k]]))[0].id;
+  }
+  // The update file makes the first leader the supervisor.
+  await db.exec(`update profiles set is_supervisor = true, leader_title = 'Supervisor' where id = (select id from profiles where role = 'leader' order by created_at limit 1) and not exists (select 1 from profiles where is_supervisor)`);
+  assert.equal((await q("select is_supervisor from profiles where id=$1", [P.leader]))[0].is_supervisor, true);
+  // Only one supervisor can exist.
+  await assert.rejects(() => db.query("update profiles set role='leader', is_supervisor=true where id=$1", [ids.t3]), /duplicate key|unique/);
+
+  // A rider can't promote themselves, and can't call the team functions.
+  await as("t2", () => db.query("update profiles set role='leader', is_supervisor=true, leader_title='Leader' where id=$1", [ids.t2]));
+  assert.deepEqual({ ...(await q("select role,is_supervisor,leader_title from profiles where id=$1", [ids.t2]))[0] }, { role: "rider", is_supervisor: false, leader_title: null });
+  await assert.rejects(() => as("t2", () => db.query("select set_team_role($1,'leader')", [ids.t2])), /Only the supervisor/);
+
+  // The supervisor makes Tom (a cleared driver) leader and Tia assistant.
+  await db.query("update profiles set driver_status='cleared', licence_ok=true where id=$1", [ids.t1]);
+  await as("leader", () => db.query("select set_team_role($1,'leader')", [ids.t1]));
+  await as("leader", () => db.query("select set_team_role($1,'assistant')", [ids.t2]));
+  assert.deepEqual((await q("select role,leader_title from profiles where id = any($1) order by full_name", [[ids.t1, ids.t2]])).map((r) => ({ ...r })),
+    [{ role: "leader", leader_title: "Assistant leader" }, { role: "leader", leader_title: "Leader" }]);
+  // A third leader is refused.
+  await assert.rejects(() => as("leader", () => db.query("select set_team_role($1,'assistant')", [ids.t3])), /already two leaders/);
+
+  // A leader (not supervisor) can manage drivers but can't change who leads, even by editing profiles.
+  await assert.rejects(() => as("t1", () => db.query("select set_team_role($1,'rider')", [ids.t2])), /Only the supervisor/);
+  await as("t1", () => db.query("update profiles set role='rider', leader_title=null where id=$1", [ids.t2]));
+  await as("t1", () => db.query("update profiles set role='leader' where id=$1", [ids.t3]));
+  await as("t1", () => db.query("update profiles set role='rider', is_supervisor=false where id=$1", [P.leader]));
+  assert.equal((await q("select role from profiles where id=$1", [ids.t2]))[0].role, "leader");
+  assert.equal((await q("select role from profiles where id=$1", [ids.t3]))[0].role, "rider");
+  assert.equal((await q("select is_supervisor from profiles where id=$1", [P.leader]))[0].is_supervisor, true);
+  // ...and the supervisor can't change their own role without handing over.
+  await assert.rejects(() => as("leader", () => db.query("select set_team_role($1,'rider')", [P.leader])), /hand over/);
+
+  // Moving Tom back to driver keeps his car and checks.
+  await as("leader", () => db.query("select set_team_role($1,'driver')", [ids.t1]));
+  assert.deepEqual({ ...(await q("select role,leader_title,driver_status,licence_ok,seats from profiles where id=$1", [ids.t1]))[0] },
+    { role: "driver", leader_title: null, driver_status: "cleared", licence_ok: true, seats: 3 });
+
+  // Hand over: only to a leader; the old supervisor chooses what they become.
+  await assert.rejects(() => as("leader", () => db.query("select hand_over_supervisor($1,'rider')", [ids.t3])), /leader first/);
+  await as("leader", () => db.query("select hand_over_supervisor($1,'assistant')", [ids.t2]));
+  assert.deepEqual({ ...(await q("select role,is_supervisor,leader_title from profiles where id=$1", [ids.t2]))[0] }, { role: "leader", is_supervisor: true, leader_title: "Supervisor" });
+  assert.deepEqual({ ...(await q("select role,is_supervisor,leader_title from profiles where id=$1", [P.leader]))[0] }, { role: "leader", is_supervisor: false, leader_title: "Assistant leader" });
+  // The new supervisor can now move the old one; the old one can't do supervisor things any more.
+  await assert.rejects(() => as("leader", () => db.query("select set_team_role($1,'leader')", [ids.t3])), /Only the supervisor/);
+  await as("t2", () => db.query("select set_team_role($1,'leader')", [P.leader]));
+  assert.equal((await q("select leader_title from profiles where id=$1", [P.leader]))[0].leader_title, "Leader");
+
+  // Every change is in the log, readable by leaders only.
+  const log = await as("leader", () => q("select change from team_log order by id"));
+  assert.deepEqual(log.map((r) => r.change), [
+    "made Tom Driver leader", "made Tia Rider assistant leader", "made Tom Driver driver",
+    "handed the supervisor role to Tia Rider", "made Leader leader",
+  ]);
+  assert.equal((await as("t3", () => q("select * from team_log"))).length, 0);
+
+  // Hand back, so the leader used by other tests is the supervisor again.
+  await as("t2", () => db.query("select hand_over_supervisor($1,'rider')", [P.leader]));
+  assert.equal((await q("select is_supervisor from profiles where id=$1", [P.leader]))[0].is_supervisor, true);
+  assert.equal((await q("select role from profiles where id=$1", [ids.t2]))[0].role, "rider");
+});
