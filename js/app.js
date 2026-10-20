@@ -300,8 +300,16 @@ const actions = {
     if (S.planView.warnings?.some((w) => w.code === "over_seats" || w.code === "driver_issue")) throw new Error("Fix the warnings about seats or driver clearance before approving.");
     if (S.planView.warnings?.some((w) => w.code === "no_location")) throw new Error("Someone in a car has no confirmed address, so their pickup time is unknown. Move them to the waiting list or confirm their address, then approve.");
     if (S.planView.travelSource === "estimate" && CONFIG.routing.enabled && !confirm("Real road times couldn't be loaded, so these times are rough estimates (with a bigger safety margin). Press Cancel and then Redraft to try again, or OK to approve anyway.")) return;
+    // Alerts the approved plan has dealt with are cleared on their own: a cancelled rider no
+    // longer in a car, or a driver who can't make it and no longer has riders.
+    const asg = S.planView.assignments;
+    const handled = (S.data.alerts || []).filter((x) => !x.resolved && x.sunday === S.sunday && (
+      (x.kind === "rider_cancel" && !asg.some((y) => y.riderId === x.riderId)) ||
+      (x.kind === "driver_cancel" && !asg.some((y) => y.driverId === x.driverId))));
     await persistPlan("approved");
-    say("Approved. Drivers and riders can now see their details. Copy their messages from the Texts tab.");
+    for (const x of handled) await store.resolveAlert(x.id);
+    if (handled.length) await reload();
+    say(`Approved. Drivers and riders can now see their details. Copy their messages from the Texts tab.${handled.length ? ` ${handled.length} alert${handled.length > 1 ? "s" : ""} cleared, as the plan now handles ${handled.length > 1 ? "them" : "it"}.` : ""}`);
   },
   async reassign(d) {
     needChurch();
@@ -373,7 +381,7 @@ async function findHelpers(form) {
   const riderId = (f.get("helpRider") || "").toString();
   const typed = (f.get("address") || "").toString().trim();
   let rider;
-  if (riderId) {
+  if (riderId && !typed) {
     rider = S.data.profiles.find((p) => p.id === riderId);
     S.help = { sunday: S.sunday, riderId, name: rider.name, neighbourhood: rider.neighbourhood, seats };
   } else if (typed) {
@@ -386,7 +394,7 @@ async function findHelpers(form) {
     rider = { lat: ok.lat, lng: ok.lng, geoSource: "verified" };
     S.help.neighbourhood = ok.neighbourhood || null;
   } else {
-    throw new Error("Choose a rider, or type the address of someone who isn't registered.");
+    throw new Error("Type the rider's name and address (pick it from the list), or choose someone already registered.");
   }
   const assignments = S.planView?.assignments || S.data.plans[S.sunday]?.assignments || [];
   S.help.result = await rankHelpers({ data: S.data, sunday: S.sunday, church: S.church, config: CONFIG, rider, seats, assignments });

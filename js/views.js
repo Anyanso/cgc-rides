@@ -463,7 +463,14 @@ function textsTab(S) {
   html += copyBlock("Weekly check-in (Thursday, to the group)", T.weeklyCheckin(sunday, url), "Opt-in riders only. Silence means no ride.");
   html += copyBlock("Saturday reminder (to the group)", T.reminder(sunday));
   if (approved) {
-    const asg = plan.assignments;
+    // Messages are written fresh from the approved plan each time (nothing is stored), and
+    // anyone who has cancelled since is left out straight away.
+    const cancelled = new Set(S.data.requests.filter((q) => q.sunday === sunday && q.status === "cancelled").map((q) => q.riderId));
+    const gone = plan.assignments.filter((a) => cancelled.has(a.riderId));
+    const asg = plan.assignments.filter((a) => !cancelled.has(a.riderId));
+    if (gone.length) {
+      html += banner("warn", `<strong>${esc(gone.map((a) => people.get(a.riderId)?.name || "A rider").join(", "))} cancelled after this plan was approved.</strong> Their messages are taken out below, and their driver has a cancellation message to send. The other times still come from the approved plan: open the Plan tab and tap <strong>Approve & share</strong> on the updated plan so leave times are right.`);
+    }
     html += `<h3>Ride details to each rider</h3>`;
     for (const a of asg) {
       const r = people.get(a.riderId); const d = people.get(a.driverId);
@@ -471,6 +478,13 @@ function textsTab(S) {
       html += copyBlock(`${r.name}${r.textsConsentAt ? "" : " (no text consent: call instead)"}`, T.riderDetails(sunday, r, d, a, (S.data.requests.find((q) => q.riderId === r.id && q.sunday === sunday)?.extraPeople || 0) + 1), `${r.phone || "no phone on file"}`);
     }
     html += `<h3>Pickup list to each driver</h3>`;
+    for (const did of [...new Set(gone.map((a) => a.driverId))]) {
+      const d = people.get(did);
+      const left = asg.filter((a) => a.driverId === did).length;
+      const names = gone.filter((a) => a.driverId === did).map((a) => people.get(a.riderId));
+      if (d) html += copyBlock(left ? `${d.name}: a rider cancelled` : `${d.name}: no pickups now`, names.map((r) => T.riderCancelledToDriver(sunday, d, r, left)).join("\n\n"),
+        (d.phone || "no phone on file") + (left ? ". Send this now; send the updated pickup list once you've approved the updated plan." : ". Their rider cancelled, so they have nobody to pick up."));
+    }
     const cars = groupCars(asg, S.data.profiles);
     for (const did of [...new Set(cars.map((c) => c.driverId))]) {
       const d = people.get(did);
@@ -522,23 +536,20 @@ function lastMinuteCard(S) {
   const opt = (p) => `<option value="${esc(p.id)}" ${S.help?.riderId === p.id ? "selected" : ""} ${isConfirmed(p) ? "" : "disabled"}>${esc(p.name)}${p.neighbourhood ? ` · ${esc(p.neighbourhood)}` : ""}${isConfirmed(p) ? "" : " (address not confirmed)"}</option>`;
   const group = (label, list) => (list.length ? `<optgroup label="${esc(label)}">${list.map(opt).join("")}</optgroup>` : "");
   const form = `<form data-form="help" class="stack">
-      <label class="field"><span>Who needs a ride?</span><select name="helpRider">
+      <label class="field"><span>Rider's name</span><input name="helpName" value="${esc(S.help?.newRider?.name || "")}" placeholder="e.g. Jo"></label>
+      <div class="field addr">
+        <label for="help-addr">Where to pick them up</label>
+        <input id="help-addr" name="address" value="${esc(S.help?.newRider?.address || "")}" autocomplete="off" placeholder="Start typing, e.g. 639 Addie Crescent" aria-autocomplete="list" aria-controls="help-suggest">
+        <div class="suggest" id="help-suggest" role="listbox" hidden></div>
+        <p class="small muted addr-status" aria-live="polite">Pick the address from the list. It's checked to the house number, like everyone else's.</p>
+        <input type="hidden" name="pickedAddress" value=""><input type="hidden" name="pickedLat" value=""><input type="hidden" name="pickedLng" value="">
+      </div>
+      <label class="field"><span>Or choose someone already registered</span><select name="helpRider">
         <option value="">Choose a rider…</option>
         ${group("Waiting for a seat this Sunday", riders.filter((p) => waiting.has(p.id)))}
         ${group("Asking this Sunday", riders.filter((p) => asking.has(p.id) && !waiting.has(p.id)))}
         ${group("Other registered riders", riders.filter((p) => !asking.has(p.id)))}
       </select></label>
-      <details class="newrider" ${S.help?.newRider ? "open" : ""}><summary>Someone not registered? Type their address</summary>
-        <div class="stack">
-          <label class="field"><span>Their first name</span><input name="helpName" value="${esc(S.help?.newRider?.name || "")}"></label>
-          <div class="field addr">
-            <label for="help-addr">Their address</label>
-            <input id="help-addr" name="address" value="${esc(S.help?.newRider?.address || "")}" autocomplete="off" placeholder="e.g. 639 Addie Crescent" aria-autocomplete="list" aria-controls="help-suggest">
-            <div class="suggest" id="help-suggest" role="listbox" hidden></div>
-            <p class="small muted addr-status" aria-live="polite">Pick their address from the list. It's checked to the house number, like everyone else's.</p>
-            <input type="hidden" name="pickedAddress" value=""><input type="hidden" name="pickedLat" value=""><input type="hidden" name="pickedLng" value="">
-          </div>
-        </div></details>
       <label class="field"><span>Seats needed (the rider plus anyone with them)</span><input name="helpSeats" type="number" min="1" max="10" value="${esc(S.help?.seats || 1)}"></label>
       <button class="btn primary" type="submit">Find the closest drivers</button>
     </form>`;
