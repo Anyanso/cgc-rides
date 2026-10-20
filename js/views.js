@@ -46,6 +46,9 @@ export function pushCard(S) {
   const role = S.me?.role;
   const detailsTab = S.tab === "details" || S.tab === "driving";
   if (!st || st === "unsupported" || st === "not-set-up") return "";
+  const n = S.pushNote;
+  const note = n ? `<p class="pushnote ${esc(n.kind)}" role="status">${esc(n.text)}</p>` : "";
+  if (st === "on" && n) return `<article class="card pushcard">${note}</article>`;
   if (st === "on") return detailsTab ? `<p class="small muted pushline">🔔 Notifications are on for this device. ${btn("Turn off", "push-off", {}, "link")}</p>` : "";
   if (S.pushLater && !detailsTab) return "";
   const later = detailsTab ? "" : btn("Not now", "push-later", {}, "link");
@@ -53,11 +56,12 @@ export function pushCard(S) {
     <p class="small">iPhones only send notifications from the app on your home screen. It takes a moment:</p>
     <ol class="small"><li>In Safari, tap the <strong>Share</strong> button (the square with an arrow).</li><li>Tap <strong>Add to Home Screen</strong>, then <strong>Add</strong>.</li><li>Open <strong>CGC Rides</strong> from your home screen, sign in, and tap <strong>Allow notifications</strong>.</li></ol>
     ${later}</article>`;
+  if (st === "blocked" && n) return `<article class="card pushcard">${note}</article>`;
   if (st === "blocked") return detailsTab ? `<article class="card pushcard"><h3>🔔 Notifications are blocked</h3>
     <p class="small">You said no earlier, so your browser won't ask again. To allow them: on Android (Chrome), tap the icon left of the web address → <strong>Permissions</strong> (or Site settings) → <strong>Notifications</strong> → <strong>Allow</strong>. On iPhone: <strong>Settings → Notifications → CGC Rides</strong> → Allow. Then come back here.</p></article>` : "";
   return `<article class="card pushcard"><h3>🔔 Get a notification ${esc(PUSH_WHAT[role] || PUSH_WHAT.rider)}</h3>
-    <p class="small muted">Works even when the app is closed. You can turn it off any time.</p>
-    <div class="row wrap">${btn("Allow notifications", "push-on", {}, "primary")}${later}</div></article>`;
+    <p class="small muted">Works even when the app is closed. You can turn it off any time.</p>${note}
+    <div class="row wrap">${btn(n && n.kind !== "wait" ? "Try again" : "Allow notifications", "push-on", {}, "primary")}${later}</div></article>`;
 }
 
 // ---------------------------------------------------------------- shell + entry screens

@@ -1,6 +1,7 @@
 -- Update for an EXISTING Chosen Generation Rides database (20 Oct 2026, evening):
 -- 1) remembers whether a home was located with the phone ('gps') or by a pin placed by hand ('pin');
--- 2) when a rider cancels from a shared plan, their driver gets a phone notification straight away.
+-- 2) when a rider cancels from a shared plan, their driver gets a phone notification straight away;
+-- 3) a test notification right after someone allows notifications.
 -- Supabase -> SQL Editor -> New query -> paste ALL of this -> Run. Safe to run more than once.
 
 alter table profiles drop constraint if exists profiles_geo_source_check;
@@ -38,4 +39,22 @@ begin
   return new;
 end $$;
 
-select 'Done: phone locations, and drivers are told when a rider cancels.' as result;
+-- A test notification to yourself, sent right after you allow notifications.
+create or replace function push_test()
+returns int
+language plpgsql security definer set search_path = public, pg_temp as $$
+declare me uuid; n int;
+begin
+  select id into me from profiles where user_id = auth.uid();
+  if me is null then raise exception 'Finish registering first.'; end if;
+  insert into push_queue (profile_id, title, body, tag)
+  select me, 'Notifications are on ✓', 'This is a test from Chosen Generation Rides. You''ll get messages like this when your ride or route changes.', 'test'
+   where exists (select 1 from push_subs s where s.profile_id = me);
+  get diagnostics n = row_count;
+  return n;
+end $$;
+
+revoke execute on function push_test() from public, anon;
+grant execute on function push_test() to authenticated;
+
+select 'Done: phone locations, drivers told when a rider cancels, test notifications.' as result;

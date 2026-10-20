@@ -525,3 +525,12 @@ test("a rider who cancels from a shared plan: their driver gets a notification (
   assert.match(shared[0].body, /^Remi cancelled their ride for Sunday, so you don't need to pick them up\./);
   assert.equal((await run("draft", sundayInDays(49))).length, 0);
 });
+
+test("a test notification goes only to yourself, and only if this person has a device saved", async () => {
+  await db.exec("delete from push_queue");
+  const mine = await as("dr", () => q("select push_test() as n"));
+  assert.equal(mine[0].n, 1);
+  const rows = await q("select p.full_name, q.title from push_queue q join profiles p on p.id = q.profile_id");
+  assert.deepEqual(rows.map((r) => [r.full_name, r.title]), [["Dora Driver", "Notifications are on ✓"]]);
+  assert.equal((await as("rr", () => q("select push_test() as n")))[0].n, 0);
+});

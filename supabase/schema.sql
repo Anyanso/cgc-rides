@@ -756,6 +756,21 @@ begin
   return 'ok';
 end $$;
 
+-- A test notification to yourself, sent right after you allow notifications.
+create or replace function push_test()
+returns int
+language plpgsql security definer set search_path = public, pg_temp as $$
+declare me uuid; n int;
+begin
+  select id into me from profiles where user_id = auth.uid();
+  if me is null then raise exception 'Finish registering first.'; end if;
+  insert into push_queue (profile_id, title, body, tag)
+  select me, 'Notifications are on ✓', 'This is a test from Chosen Generation Rides. You''ll get messages like this when your ride or route changes.', 'test'
+   where exists (select 1 from push_subs s where s.profile_id = me);
+  get diagnostics n = row_count;
+  return n;
+end $$;
+
 -- Leaders: who has notifications turned on (just the people, not their device details).
 create or replace function push_people()
 returns setof uuid

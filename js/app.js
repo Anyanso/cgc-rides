@@ -14,7 +14,7 @@ import { shell, landingView, signInView, demoPickerView, roleView, esc, remindGr
 import { lastMinuteBroadcast } from "./texts.js";
 import { setServices, upcomingDays, configFor, serviceFor } from "./services.js";
 import { DEMO_CHURCH } from "./demo-data.js";
-import { pushState, turnOn, turnOff, resync } from "./push.js";
+import { pushState, turnOn, turnOff, resync, askPermission } from "./push.js";
 import { approvalPings } from "./notify.js";
 
 const root = document.getElementById("app");
@@ -318,7 +318,7 @@ const actions = {
   "signin-reset"() { S.signInSent = ""; },
   async viewas(d) { store.viewAs(d.id); S.session = store.session(); S.tab = null; S.sunday = null; S.planView = null; S.editing = null; await reload(); say(`Viewing as ${S.me?.name}`); },
   async signout() { await store.signOut(); S.session = null; S.me = null; S.screen = "landing"; S.tab = null; S.planView = null; S.regRole = null; },
-  tab(d) { S.tab = d.tab; S.editing = null; S.formDraft = null; S.remindResult = null; },
+  tab(d) { S.tab = d.tab; S.editing = null; S.formDraft = null; S.remindResult = null; if (S.pushNote?.kind !== "wait") S.pushNote = null; },
   async "pick-sunday"(d) {
     if (d.sunday === S.sunday) return;
     if (S.planView?.dirty && S.planView.edited && !confirm("You have unsaved changes to this plan. Switch anyway?")) return;
@@ -470,9 +470,27 @@ const actions = {
   },
   async "push-on"() {
     if (S.push === "ios-install") return;
-    S.push = await turnOn(store); // asks the browser straight from the tap
-    if (S.push === "on") say("Notifications are on. We'll ping this device when something changes for you.");
-    else if (S.push === "blocked") S.error = "Notifications were blocked. See My details for how to allow them.";
+    const asking = askPermission(); // straight from the tap, or the phone won't ask
+    S.pushNote = { kind: "wait", text: "Your phone should now ask whether to allow notifications. Tap Allow. Nothing popped up? Look for a bell or 🔒 icon beside the web address and allow notifications there." };
+    render();
+    try {
+      S.push = await turnOn(store, asking);
+    } catch (err) {
+      S.pushNote = { kind: "err", text: `Notifications aren't on yet. ${err.message}` };
+      return;
+    }
+    if (S.push === "on") {
+      S.pushNote = { kind: "wait", text: "✓ This phone is set up. Sending a test notification…" };
+      render();
+      const r = await store.pushTest().catch(() => null);
+      S.pushNote = r?.sent
+        ? { kind: "ok", text: "✓ Notifications are on. We just sent a test notification to this phone; it should appear in a few seconds." }
+        : { kind: "warn", text: "✓ This phone is set up for notifications, but the test message couldn't be sent just now. You'll still get real ones; if they never come, tell the transport leader." };
+    } else if (S.push === "blocked") {
+      S.pushNote = { kind: "err", text: "Notifications were blocked on this phone. To allow them: tap the 🔒 (or settings) icon beside the web address → Permissions (or Site settings) → Notifications → Allow. Then come back and tap Allow notifications again." };
+    } else {
+      S.pushNote = { kind: "warn", text: "The question was closed before you answered, so notifications aren't on yet. Tap Allow notifications again, then tap Allow. Still nothing? Tap the 🔒 icon beside the web address → Permissions → Notifications → Allow." };
+    }
   },
   async remind(d) {
     const list = remindGroups(S)[d.group] || [];

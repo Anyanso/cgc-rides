@@ -59,3 +59,11 @@ test("address reminders: pins placed by hand, and homes not on the map yet (peop
   assert.deepEqual(g.pins.map((p) => p.id), ["a"]);
   assert.deepEqual(g.unconfirmed.map((p) => p.id), ["c"]);
 });
+
+test("the notifications card shows what happened after tapping Allow", () => {
+  const S = (push, pushNote, tab = "rides") => ({ push, pushNote, me: { role: "driver" }, tab });
+  assert.match(pushCard(S("off", { kind: "wait", text: "Your phone should now ask" })), /Your phone should now ask[\s\S]*Allow notifications/);
+  assert.match(pushCard(S("off", { kind: "warn", text: "The question was closed" })), /pushnote warn[\s\S]*Try again/);
+  assert.match(pushCard(S("on", { kind: "ok", text: "✓ Notifications are on." })), /pushnote ok/);
+  assert.match(pushCard(S("blocked", { kind: "err", text: "Notifications were blocked" })), /pushnote err/);
+});
