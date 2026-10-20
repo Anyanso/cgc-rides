@@ -323,7 +323,7 @@ function planTab(S) {
   html += `<p class="small muted">Times use real road times plus a ${esc(S.config.matching.trafficPct ?? 20)}% safety margin and ${esc(S.config.matching.legBufferMin ?? 1)} min per drive, ${esc(S.config.matching.stopMin)} min at each house, arriving ${esc(S.config.service.arriveBeforeMin)} min before the service.</p>`;
   if (S.mode === "demo") html += banner("info", `Demo plans use a placeholder church location (${esc(S.demoChurchLabel)}).`);
   html += `<div class="tiles"><div class="tile"><b>${askingPeople}</b>people asking</div><div class="tile"><b>${seats}</b>seats offered</div>
-    <div class="tile"><b>${pv?.assignments.reduce((n, a) => n + (a.seats ?? 1), 0) ?? 0}</b>seated</div><div class="tile"><b>${pv?.waitlist.reduce((n, w) => n + (w.seats ?? 1), 0) ?? 0}</b>waiting</div></div>`;
+    <div class="tile"><b>${pv?.assignments.reduce((n, a) => n + (a.seats ?? 1), 0) ?? 0}</b>${pv && pv.status === "approved" && !pv.dirty ? "seated and shared" : "in a car (not shared yet)"}</div><div class="tile"><b>${pv?.waitlist.reduce((n, w) => n + (w.seats ?? 1), 0) ?? 0}</b>waiting</div></div>`;
   if (askingPeople > seats) html += banner("warn", `${askingPeople} people are asking (counting those coming with riders) but only ${seats} seats are offered. Ask drivers about a second trip, or recruit another driver.`);
 
   const status = !pv ? badge("No plan yet", "muted") : pv.status === "approved" ? badge(pv.dirty ? "Approved · changes not saved" : "Approved and shared", "ok") : badge(pv.dirty ? "Draft · not saved" : "Draft saved", "gold");
