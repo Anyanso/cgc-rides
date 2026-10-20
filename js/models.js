@@ -3,7 +3,7 @@
 // camelCase (used in the app) <-> snake_case (used in the database)
 const MAP = {
   name: "full_name", address: "home_address", status: "driver_status",
-  userId: "user_id", geoSource: "geo_source",
+  userId: "user_id", geoSource: "geo_source", postalCode: "postal_code",
   weeklyCheckin: "weekly_checkin", drivesEveryWeek: "drives_every_week",
   secondTrip: "second_trip", licenceOk: "licence_ok", insuranceOk: "insurance_ok",
   policeCheckExpiry: "police_check_expiry", textsConsentAt: "texts_consent_at",

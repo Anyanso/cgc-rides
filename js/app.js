@@ -5,11 +5,11 @@ import { CONFIG, IS_DEMO } from "./config.js";
 import { createDemoStore } from "./store-demo.js";
 import { peopleCsv, backupJson, stamp, download } from "./backup.js";
 import { toISO, fmtDate } from "./dates.js";
-import { geocode } from "./geo.js";
+import { confirmAddress, suggestAddresses, normalizePhone, normalizePostal, isConfirmed } from "./geo.js";
 import { driverIssue } from "./matching.js";
 import { draftPlan, recompute, applyMove, reassignDriver } from "./planner.js";
 import { driverAvailable, CONSENT_WORDING, isDriver } from "./models.js";
-import { shell, landingView, signInView, demoPickerView, roleView } from "./views.js";
+import { shell, landingView, signInView, demoPickerView, roleView, esc } from "./views.js";
 import { lastMinuteBroadcast } from "./texts.js";
 import { DEMO_CHURCH } from "./demo-data.js";
 
@@ -20,7 +20,7 @@ const S = {
   config: CONFIG, mode: IS_DEMO ? "demo" : "live",
   screen: "landing", session: null, me: null, tab: null,
   sundays: [], sunday: null, rides: [], weeks: [], routes: {},
-  data: null, planView: null, church: null, churchWarning: null,
+  data: null, planView: null, church: null, churchWarning: null, churchFound: null, formDraft: null,
   editing: null, busy: false, toast: "", error: "", signInSent: "", regRole: null, broadcast: "",
   now: new Date(), todayISO: "", demoPeople: null, appUrl: "", demoChurchLabel: DEMO_CHURCH.label,
 };
@@ -59,18 +59,20 @@ async function guarded(fn) {
 async function resolveChurch() {
   if (S.mode === "demo" && !(CONFIG.church.lat != null)) { S.church = { id: "church", ...DEMO_CHURCH }; S.churchWarning = null; return; }
   const c = CONFIG.church;
-  if (c.lat != null && c.lng != null) { S.church = { lat: c.lat, lng: c.lng }; S.churchWarning = null; return; }
+  if (c.lat != null && c.lng != null) { S.church = { lat: c.lat, lng: c.lng }; S.churchWarning = null; S.churchFound = { pinned: true, lat: c.lat, lng: c.lng }; return; }
   if (c.address) {
-    const key = `cgc-church:${c.address}`;
-    try { const hit = JSON.parse(localStorage.getItem(key) || "null"); if (hit) { S.church = hit; S.churchWarning = null; return; } } catch (_) { /* no storage */ }
-    const g = await geocode(c.address, { nominatimUrl: CONFIG.geocoding.nominatimUrl, enabled: CONFIG.geocoding.enabled });
-    if (g.source === "address") {
+    // Only an exact house-number match is accepted. (Older versions cached a looser match.)
+    const key = `cgc-church-v2:${c.address}`;
+    try { const hit = JSON.parse(localStorage.getItem(key) || "null"); if (hit) { S.church = { lat: hit.lat, lng: hit.lng }; S.churchFound = hit; S.churchWarning = null; return; } } catch (_) { /* no storage */ }
+    const g = await confirmAddress(c.address, { nominatimUrl: CONFIG.geocoding.nominatimUrl });
+    if (g.ok) {
       S.church = { lat: g.lat, lng: g.lng }; S.churchWarning = null;
-      try { localStorage.setItem(key, JSON.stringify(S.church)); } catch (_) { /* ignore */ }
+      S.churchFound = { pinned: false, address: g.address, postcode: g.postcode, neighbourhood: g.neighbourhood, lat: g.lat, lng: g.lng };
+      try { localStorage.setItem(key, JSON.stringify(S.churchFound)); } catch (_) { /* ignore */ }
       return;
     }
-    S.church = null;
-    S.churchWarning = `We couldn't find "${c.address}" on the map. Put the church's latitude and longitude in js/config.js instead.`;
+    S.church = null; S.churchFound = null;
+    S.churchWarning = `We couldn't find "${c.address}" exactly on the map (${g.reason}) Pin the church's latitude and longitude in js/config.js.`;
     return;
   }
   S.church = null;
@@ -120,7 +122,10 @@ function readProfile(form) {
   const has = (n) => form.elements.namedItem(n) != null;
   const text = (n) => (f.get(n) || "").toString().trim() || null;
   const bool = (n) => f.get(n) === "on";
-  const out = { name: text("name"), phone: text("phone"), address: text("address"), neighbourhood: text("neighbourhood"), minor: bool("minor"), notes: text("notes") };
+  const num = (n) => { const v = text(n); return v == null || v === "" || Number.isNaN(Number(v)) ? null : Number(v); };
+  const out = { name: text("name"), phone: text("phone"), address: text("address"), postalCode: text("postalCode"), neighbourhood: text("neighbourhood"), minor: bool("minor"), notes: text("notes") };
+  // Filled in when the person picks a suggestion (cleared again if they edit the address).
+  out.picked = text("pickedAddress") ? { address: text("pickedAddress"), lat: num("pickedLat"), lng: num("pickedLng") } : null;
   if (has("role")) out.role = text("role");
   if (has("alsoDrives")) out.status = bool("alsoDrives") ? "cleared" : "none";
   if (has("seats")) Object.assign(out, { seats: Number(f.get("seats")) || 0, vehicle: text("vehicle"), drivesEveryWeek: bool("drivesEveryWeek"), secondTrip: bool("secondTrip") });
@@ -129,11 +134,47 @@ function readProfile(form) {
   return out;
 }
 
-async function withLocation(patch, previous = {}) {
-  const changed = patch.address !== previous.address || patch.neighbourhood !== previous.neighbourhood || previous.lat == null;
-  if (!changed) return patch;
-  const g = await store.locate(patch.address, patch.neighbourhood, CONFIG.geocoding);
-  return { ...patch, lat: g.lat, lng: g.lng, geoSource: g.source };
+/**
+ * Checks a profile before saving. Name, phone, home address and postal code are required.
+ * The address must be confirmed on the map down to the house number; only then is it saved
+ * with a location (geo_source "verified") and used for matching.
+ * strict = true for people registering themselves: an unconfirmed address can't be saved.
+ * The leader (strict = false) may save it anyway; that person is then never matched until fixed.
+ * Returns { patch, warning }.
+ */
+async function checkProfile(raw, previous = {}, { strict }) {
+  const { picked, ...patch } = raw;
+  if (!patch.name) throw new Error("Please enter the full name.");
+  const phone = normalizePhone(patch.phone);
+  if (!phone) throw new Error("Please enter a 10-digit phone number, for example 306-555-0142.");
+  patch.phone = phone;
+  if (!patch.address) throw new Error("Please enter the home address, starting with the house number.");
+  const typedPostal = patch.postalCode ? normalizePostal(patch.postalCode) : null;
+  if (patch.postalCode && !typedPostal) throw new Error("That postal code doesn't look right. It should look like S7N 0A1.");
+
+  const unchanged = patch.address === previous.address && isConfirmed(previous);
+  let warning = "";
+  if (unchanged) {
+    Object.assign(patch, { lat: previous.lat, lng: previous.lng, geoSource: previous.geoSource, neighbourhood: previous.neighbourhood || patch.neighbourhood });
+  } else {
+    const g = await confirmAddress(patch.address, { nominatimUrl: CONFIG.geocoding.nominatimUrl, postcode: typedPostal });
+    // A picked suggestion that the final check can't repeat is still trusted: it came from the map with a house number.
+    const ok = g.ok ? g : (picked && picked.address === patch.address && picked.lat != null ? { ok: true, address: picked.address, lat: picked.lat, lng: picked.lng, postcode: null, neighbourhood: null } : null);
+    if (ok) {
+      Object.assign(patch, { address: ok.address, lat: ok.lat, lng: ok.lng, geoSource: "verified" });
+      if (ok.neighbourhood) patch.neighbourhood = ok.neighbourhood;
+      if (!typedPostal && ok.postcode) patch.postalCode = ok.postcode;
+    } else if (strict) {
+      throw new Error(g.reason);
+    } else {
+      Object.assign(patch, { lat: null, lng: null, geoSource: "none" });
+      warning = ` Address not confirmed (${g.reason}) This person won't be matched until it is.`;
+    }
+  }
+  const postal = normalizePostal(patch.postalCode);
+  if (!postal) throw new Error("Please enter the postal code, for example S7N 0A1.");
+  patch.postalCode = postal;
+  return { patch, warning };
 }
 
 // ---------------------------------------------------------------- plan helpers
@@ -142,7 +183,7 @@ function planSummary() { return { travelSource: S.planView.travelSource || null,
 
 async function persistPlan(status) {
   const pv = S.planView;
-  await store.savePlan(S.sunday, status, planSummary(), pv.assignments.map((a) => ({ riderId: a.riderId, driverId: a.driverId, trip: a.trip, order: a.order ?? 0, seats: a.seats ?? 1, pickupMin: a.pickupMin ?? null, readyByMin: a.readyByMin ?? null, arriveMin: a.arriveMin ?? null })), pv.waitlist);
+  await store.savePlan(S.sunday, status, planSummary(), pv.assignments.map((a) => ({ riderId: a.riderId, driverId: a.driverId, trip: a.trip, order: a.order ?? 0, seats: a.seats ?? 1, pickupMin: a.pickupMin ?? null, readyByMin: a.readyByMin ?? null, arriveMin: a.arriveMin ?? null, departMin: a.departMin ?? null })), pv.waitlist);
   S.planView = null;
   await reload();
 }
@@ -159,14 +200,14 @@ const actions = {
   home() { S.screen = "landing"; },
   "demo-start"() { S.screen = "picker"; },
   "goto-signin"() { S.screen = "signin"; },
-  "reg-back"() { S.regRole = null; },
+  "reg-back"() { S.regRole = null; S.formDraft = null; },
   async "export-people"() { download(`cgc-rides-people-${stamp()}.csv`, "text/csv", peopleCsv(S.data.profiles || [])); say("People list downloaded. Keep it private."); },
   async "export-backup"() { const t = await store.exportAll(); download(`cgc-rides-backup-${stamp()}.json`, "application/json", backupJson(t)); say("Backup downloaded. Keep it private."); },
   "reg-role"(d) { S.regRole = d.role === "driver" ? "driver" : "rider"; },
   "signin-reset"() { S.signInSent = ""; },
   async viewas(d) { store.viewAs(d.id); S.session = store.session(); S.tab = null; S.sunday = null; S.planView = null; S.editing = null; await reload(); say(`Viewing as ${S.me?.name}`); },
   async signout() { await store.signOut(); S.session = null; S.me = null; S.screen = "landing"; S.tab = null; S.planView = null; S.regRole = null; },
-  tab(d) { S.tab = d.tab; S.editing = null; },
+  tab(d) { S.tab = d.tab; S.editing = null; S.formDraft = null; },
   async "pick-sunday"(d) {
     if (d.sunday === S.sunday) return;
     if (S.planView?.dirty && !confirm("You have unsaved changes to this plan. Switch anyway?")) return;
@@ -196,6 +237,8 @@ const actions = {
   async "save-draft"() { await persistPlan("draft"); say("Draft saved. Drivers and riders can't see it yet."); },
   async approve() {
     if (S.planView.warnings?.some((w) => w.code === "over_seats" || w.code === "driver_issue")) throw new Error("Fix the warnings about seats or driver clearance before approving.");
+    if (S.planView.warnings?.some((w) => w.code === "no_location")) throw new Error("Someone in a car has no confirmed address, so their pickup time is unknown. Move them to the waiting list or confirm their address, then approve.");
+    if (S.planView.travelSource === "estimate" && CONFIG.routing.enabled && !confirm("Real road times couldn't be loaded, so these times are rough estimates (with a bigger safety margin). Press Cancel and then Redraft to try again, or OK to approve anyway.")) return;
     await persistPlan("approved");
     say("Approved. Drivers and riders can now see their details. Copy their messages from the Texts tab.");
   },
@@ -225,8 +268,8 @@ const actions = {
     say("Re-placed that group across cars. Everyone else stayed where they were. Review, then save.");
   },
   async resolve(d) { await store.resolveAlert(d.id); await reload(); },
-  edit(d) { S.editing = d.id; },
-  "edit-cancel"() { S.editing = null; },
+  edit(d) { S.editing = d.id; S.formDraft = null; },
+  "edit-cancel"() { S.editing = null; S.formDraft = null; },
   async "remove-person"(d) {
     const p = S.data.profiles.find((x) => x.id === d.id);
     if (!p) return;
@@ -254,23 +297,25 @@ async function onSubmit(form) {
   if (kind === "profile") {
     const leaderEditing = S.me?.role === "leader" && S.editing;
     const raw = readProfile(form);
+    S.formDraft = raw; // keeps what was typed if something needs fixing
     if (leaderEditing) {
       const existing = S.editing === "new" ? {} : S.data.profiles.find((p) => p.id === S.editing);
-      const patch = await withLocation(raw, existing);
+      const { patch, warning } = await checkProfile(raw, existing, { strict: false });
       const id = await store.saveProfile({ ...(existing.id ? { id: existing.id } : {}), ...patch });
       const f = new FormData(form);
       if (S.editing === "new") {
         if (f.get("needsRide") === "on") await store.addRequest(id, S.sunday, { extraPeople: Math.max(0, Math.min(10, Number(f.get("extraPeople")) || 0)), canSplit: f.get("canSplit") === "on" });
         if (f.get("consentByPhone") === "on") await store.giveConsent(CONSENT_WORDING + " (agreed by phone, recorded by the leader)", id);
       }
-      S.editing = null; await reload(); say("Saved."); return;
+      S.editing = null; S.formDraft = null; await reload(); say("Saved." + warning); return;
     }
     const registering = !S.me;
-    const patch = await withLocation(raw, S.me || {});
+    const { patch } = await checkProfile(raw, S.me || {}, { strict: true });
     if (!registering) delete patch.role;
     S.me = await store.saveMyProfile(patch);
+    S.formDraft = null;
     if (registering) { S.tab = null; S.regRole = null; }
-    await reload(); say(registering ? "You're registered." : "Saved.");
+    await reload(); say(registering ? `You're registered. Your address is confirmed${patch.neighbourhood ? ` (${patch.neighbourhood})` : ""}.` : "Saved.");
   }
 }
 
@@ -284,7 +329,63 @@ async function copyText(text) {
 
 // ---------------------------------------------------------------- wiring
 
+// ---------------------------------------------------------------- address suggestions
+// Works on the form in place (no redraw), so typing and focus are never interrupted.
+
+let suggestTimer = null;
+let suggestSeq = 0;
+const field = (form, n) => form.elements.namedItem(n);
+function setPicked(form, s) {
+  field(form, "pickedAddress").value = s ? s.address : "";
+  field(form, "pickedLat").value = s ? s.lat : "";
+  field(form, "pickedLng").value = s ? s.lng : "";
+}
+root.addEventListener("input", (e) => {
+  const input = e.target;
+  if (!(input instanceof HTMLInputElement) || input.name !== "address" || !input.form?.querySelector(".suggest")) return;
+  const form = input.form;
+  const box = form.querySelector(".suggest");
+  const status = form.querySelector(".addr-status");
+  setPicked(form, null);
+  status.innerHTML = '<span class="warn-text">Not confirmed yet.</span> Pick your address from the list, or save and we\'ll check it.';
+  clearTimeout(suggestTimer);
+  const q = input.value;
+  const seq = ++suggestSeq;
+  if (q.trim().length < 4 || !/\d/.test(q)) { box.hidden = true; box.innerHTML = ""; return; }
+  suggestTimer = setTimeout(async () => {
+    const list = await suggestAddresses(q, { photonUrl: CONFIG.geocoding.photonUrl });
+    if (seq !== suggestSeq) return; // a newer search is on its way
+    box._list = list;
+    box.innerHTML = list.length
+      ? list.map((s, i) => `<button type="button" class="suggestion" role="option" data-i="${i}"><strong>${esc(s.address)}</strong><small>${esc([s.neighbourhood, s.postcode, "Saskatoon"].filter(Boolean).join(" · "))}</small></button>`).join("")
+      : `<div class="none">No exact match yet. Keep typing the full address with the house number, e.g. 1666 Stonebridge Blvd.</div>`;
+    box.hidden = false;
+  }, 350);
+});
+// Close the list when the person moves on (after a moment, so a tap on a suggestion still lands).
+root.addEventListener("focusout", (e) => {
+  if (!(e.target instanceof HTMLInputElement) || e.target.name !== "address") return;
+  const box = e.target.form?.querySelector(".suggest");
+  if (box) setTimeout(() => { if (!box.contains(document.activeElement)) box.hidden = true; }, 250);
+});
+
+function pickSuggestion(btn) {
+  const box = btn.closest(".suggest");
+  const s = box._list?.[Number(btn.dataset.i)];
+  const form = btn.closest("form");
+  if (!s || !form) return;
+  field(form, "address").value = s.address;
+  setPicked(form, s);
+  if (s.postcode) field(form, "postalCode").value = s.postcode;
+  if (s.neighbourhood) { field(form, "neighbourhood").value = s.neighbourhood; form.querySelector(".hood-name").textContent = s.neighbourhood; }
+  form.querySelector(".addr-status").innerHTML = `<span class="ok-text">✓ Found on the map${s.neighbourhood ? ` · ${esc(s.neighbourhood)}` : ""}</span>${s.postcode ? "" : " Please type your postal code below."}`;
+  box.hidden = true;
+  field(form, "postalCode").focus();
+}
+
 root.addEventListener("click", (e) => {
+  const sug = e.target.closest(".suggestion");
+  if (sug) { e.preventDefault(); pickSuggestion(sug); return; }
   const el = e.target.closest("[data-act]");
   if (!el || el.tagName === "SELECT") return;
   const fn = actions[el.dataset.act];

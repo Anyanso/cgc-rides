@@ -26,7 +26,7 @@ export async function createLiveStore(config, { createClient } = {}) {
 
   const requestFrom = (r) => ({ id: r.id, riderId: r.rider_id, sunday: r.sunday, rideHome: r.ride_home, note: r.note, extraPeople: r.extra_people || 0, canSplit: !!r.can_split, status: r.status });
   const rideFrom = (r) => camelRow(r, { sunday: "sunday", status: "status", rideHome: "ride_home", note: "note", extraPeople: "extra_people", canSplit: "can_split", driverName: "driver_name", driverPhone: "driver_phone", vehicle: "vehicle", seats: "seats", trip: "trip", pickupMin: "pickup_min", readyByMin: "ready_by_min", arriveMin: "arrive_min", waitlistedSeats: "waitlisted_seats" });
-  const routeFrom = (r) => camelRow(r, { trip: "trip", order: "stop_order", pickupMin: "pickup_min", readyByMin: "ready_by_min", arriveMin: "arrive_min", riderName: "rider_name", riderPhone: "rider_phone", address: "address", neighbourhood: "neighbourhood", lat: "lat", lng: "lng", minor: "minor", riderNotes: "rider_notes", requestNote: "request_note", rideHome: "ride_home", extraPeople: "extra_people", seats: "seats", partyTotal: "party_total" });
+  const routeFrom = (r) => camelRow(r, { trip: "trip", order: "stop_order", pickupMin: "pickup_min", readyByMin: "ready_by_min", arriveMin: "arrive_min", departMin: "depart_min", riderName: "rider_name", riderPhone: "rider_phone", address: "address", neighbourhood: "neighbourhood", lat: "lat", lng: "lng", minor: "minor", riderNotes: "rider_notes", requestNote: "request_note", rideHome: "ride_home", extraPeople: "extra_people", seats: "seats", partyTotal: "party_total" });
 
   return {
     mode: "live",
@@ -140,7 +140,7 @@ export async function createLiveStore(config, { createClient } = {}) {
       for (const p of pl.data) {
         plans[p.sunday] = {
           sunday: p.sunday, status: p.status, summary: p.summary, approvedAt: p.approved_at,
-          assignments: as.data.filter((a) => a.plan_id === p.id).map((a) => ({ riderId: a.rider_id, driverId: a.driver_id, trip: a.trip, order: a.stop_order, seats: a.seats, pickupMin: a.pickup_min, readyByMin: a.ready_by_min, arriveMin: a.arrive_min })),
+          assignments: as.data.filter((a) => a.plan_id === p.id).map((a) => ({ riderId: a.rider_id, driverId: a.driver_id, trip: a.trip, order: a.stop_order, seats: a.seats, pickupMin: a.pickup_min, readyByMin: a.ready_by_min, arriveMin: a.arrive_min, departMin: a.depart_min })),
           waitlist: wl.data.filter((w) => w.plan_id === p.id).map((w) => ({ riderId: w.rider_id, reason: w.reason, seats: w.seats })),
         };
       }

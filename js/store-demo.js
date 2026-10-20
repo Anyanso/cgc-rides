@@ -33,7 +33,7 @@ export function createDemoStore({ now = () => new Date() } = {}) {
     async saveMyProfile(patch) {
       need(viewer, "Not signed in");
       const p = me();
-      const allowed = ["name", "phone", "gender", "address", "neighbourhood", "lat", "lng", "geoSource", "minor",
+      const allowed = ["name", "phone", "gender", "address", "postalCode", "neighbourhood", "lat", "lng", "geoSource", "minor",
         "weeklyCheckin", "notes", "seats", "drivesEveryWeek", "secondTrip", "vehicle", "role"];
       if (p.role === "leader") allowed.push("status");
       for (const k of allowed) if (k in patch && !(k === "role" && !["rider", "driver"].includes(patch.role))) p[k] = patch[k];
@@ -108,7 +108,7 @@ export function createDemoStore({ now = () => new Date() } = {}) {
       return plan.assignments.filter((a) => a.driverId === m.id).sort((a, b) => a.trip - b.trip || a.order - b.order).map((a) => {
         const r = byId(a.riderId);
         const q = db.requests.find((x) => x.riderId === r.id && x.sunday === sunday);
-        return { trip: a.trip, order: a.order, pickupMin: a.pickupMin, readyByMin: a.readyByMin, arriveMin: a.arriveMin,
+        return { trip: a.trip, order: a.order, pickupMin: a.pickupMin, readyByMin: a.readyByMin, arriveMin: a.arriveMin, departMin: a.departMin ?? null,
           riderName: r.name, riderPhone: r.phone, address: r.address, neighbourhood: r.neighbourhood, lat: r.lat, lng: r.lng,
           minor: r.minor,
           riderNotes: r.notes, requestNote: q?.note ?? null, extraPeople: q?.extraPeople || 0, seats: a.seats ?? 1, partyTotal: 1 + (q?.extraPeople || 0), rideHome: !!q?.rideHome, cancelled: q?.status === "cancelled" };

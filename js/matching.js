@@ -63,7 +63,7 @@ export function driverIssue(d, sundayISO) {
   if (d.status !== "cleared") return d.status === "suspended" ? "Suspended" : "Not cleared yet";
   if (!d.available) return "Not available this Sunday";
   if (!(d.seats > 0)) return "No seats offered";
-  if (!hasLoc(d)) return "Home address not located";
+  if (!hasLoc(d)) return d.unconfirmed ? "Home address not confirmed (ask them to confirm it in My details)" : "Home address not located";
   return null;
 }
 
@@ -170,7 +170,7 @@ export function evaluate({ church, drivers, riders, assignments, travel, date, o
       const list = tmap.get(tn);
       const items = list.map((a) => {
         const r = rById.get(a.riderId);
-        if (!hasLoc(r)) warnings.push({ code: "no_location", riderId: r.id, text: `${r.name}: address not located; timing is a guess.` });
+        if (!hasLoc(r)) warnings.push({ code: "no_location", riderId: r.id, text: `${r.name}: home address not confirmed, so no pickup time can be worked out. Move them to the waiting list or confirm the address first.` });
         const pi = pairIssue(d, r, date);
         if (pi === "minor_check") warnings.push({ code: "minor_check", riderId: r.id, driverId, text: `${r.name} is under 18 and ${d.name} has no current police check.` });
         return { id: r.id, rider: r, node: riderNode(r, church), order: a.order, seats: a.seats ?? need(r) };
@@ -214,7 +214,7 @@ export function evaluate({ church, drivers, riders, assignments, travel, date, o
         arriveMin: s.arriveMin,
         routeMin: Math.round(s.arriveMin - s.departMin),
       });
-      for (const st of stops) out.push({ riderId: st.riderId, driverId, trip: t.tn, order: st.order, seats: st.seats, pickupMin: st.pickupMin, readyByMin: st.readyByMin, arriveMin: s.arriveMin });
+      for (const st of stops) out.push({ riderId: st.riderId, driverId, trip: t.tn, order: st.order, seats: st.seats, pickupMin: st.pickupMin, readyByMin: st.readyByMin, arriveMin: s.arriveMin, departMin: floor5(s.departMin) });
     });
   }
   // A group split across cars when they asked to stay together is flagged, not blocked.
@@ -323,7 +323,9 @@ export function plan({ church, drivers, riders, travel, date, options, keep = []
     const remaining = need(r0) - (keptSeats.get(r0.id) || 0);
     if (remaining <= 0) continue;
     const r = keptSeats.has(r0.id) ? { ...r0, extraPeople: remaining - 1 } : r0;
-    if (!hasLoc(r)) waitlist.push({ riderId: r.id, seats: remaining, reason: "We couldn't locate this address. Fix the address, then run the plan again." });
+    if (!hasLoc(r)) waitlist.push({ riderId: r.id, seats: remaining, reason: r.unconfirmed
+      ? "Home address not confirmed, so we can't work out a safe pickup time. Ask them to confirm it in My details (or fix it under People), then draft again."
+      : "We couldn't locate this address. Fix the address, then run the plan again." });
     else located.push(r);
   }
   const constraint = (r) => (r.minor ? 1 : 0);

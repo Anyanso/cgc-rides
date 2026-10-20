@@ -7,9 +7,10 @@ export const CONFIG = {
   appName: "Chosen Generation Rides",
   churchName: "Chosen Generation Church",
 
-  // 1) Put the church's street address here. The app looks up its coordinates
-  //    the first time the leader builds a plan. Until then the leader sees a warning.
-  //    (Or fill lat/lng directly if you already know them.)
+  // 1) The church. Every pickup time is worked back from here, so pin it exactly:
+  //    in Google Maps, right-click the church's front door, click the two numbers at the top
+  //    of the menu (that copies them), and paste them as lat and lng below.
+  //    Until then the app looks up the street address and shows the leader where it landed.
   church: { address: "601 Eastlake Avenue", lat: null, lng: null },
 
   // One service only for now. Drivers are scheduled to ARRIVE arriveBeforeMin minutes before
@@ -19,7 +20,11 @@ export const CONFIG = {
   service: { time: "11:45", arriveBeforeMin: 15, readyBy: null, readyBufferMin: 5 },
 
   // Matching limits (minutes). See README "Tuning the matching".
-  matching: { stopMin: 3, unloadMin: 2, maxDetourMin: 35, maxRouteMin: 75, earliestPickup: "09:30" },
+  // Safety margin on every drive between two stops: trafficPct % on top of the real road time
+  // (traffic lights, slow streets, finding the house) plus legBufferMin minutes. If real road
+  // times can't be loaded, estimatePct is used instead and the leader is warned.
+  // stopMin = minutes waiting at each house while the rider comes out and gets in.
+  matching: { stopMin: 3, unloadMin: 2, maxDetourMin: 35, maxRouteMin: 75, earliestPickup: "09:30", trafficPct: 20, estimatePct: 40, legBufferMin: 1 },
 
   // Texts the leader copies to ONE driver include each rider's address and phone, because the
   // driver is allowed to see them in the app anyway. Set to false to keep addresses out of texts.
@@ -37,7 +42,7 @@ export const CONFIG = {
   // Free services used from the browser when live. If they are unreachable the app
   // falls back to straight-line estimates and says so on the leader's screen.
   routing: { enabled: true, osrmUrl: "https://router.project-osrm.org" },
-  geocoding: { enabled: true, nominatimUrl: "https://nominatim.openstreetmap.org" },
+  geocoding: { enabled: true, nominatimUrl: "https://nominatim.openstreetmap.org", photonUrl: "https://photon.komoot.io" },
 };
 
 // Adding ?demo to the address opens the sample-data demo (fictional people, nothing saved),
