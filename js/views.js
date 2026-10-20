@@ -312,19 +312,34 @@ function planTab(S) {
   if (askingPeople > seats) html += banner("warn", `${askingPeople} people are asking (counting those coming with riders) but only ${seats} seats are offered. Ask drivers about a second trip, or recruit another driver.`);
 
   const status = !pv ? badge("No plan yet", "muted") : pv.status === "approved" ? badge(pv.dirty ? "Approved · changes not saved" : "Approved and shared", "ok") : badge(pv.dirty ? "Draft · not saved" : "Draft saved", "gold");
+  const placed = new Set(pv ? [...pv.assignments.map((a) => a.riderId), ...pv.waitlist.map((w) => w.riderId)] : []);
+  const newcomers = pv ? asking.filter((r) => !placed.has(r.riderId)) : [];
+  const open = !!(S.planOpen && pv);
+  const seatedN = pv ? pv.assignments.reduce((n, a) => n + (a.seats ?? 1), 0) : 0;
+  const waitingN = pv ? pv.waitlist.reduce((n, w) => n + (w.seats ?? 1), 0) : 0;
+  const carsN = pv ? new Set(pv.assignments.map((a) => `${a.driverId}|${a.trip}`)).size : 0;
+  const newcomerBanner = newcomers.length
+    ? banner("info", `<strong>${newcomers.length} new request${newcomers.length > 1 ? "s" : ""} since this plan was made:</strong> ${newcomers.map((r) => esc(people.get(r.riderId)?.name || "Rider")).join(", ")}. ${btn("Add them to the plan", "add-new", {}, "primary")}<br><span class="small">Everyone already placed stays where they are.</span>`)
+    : "";
+
   html += `<div class="row wrap">${status}${S.busy ? `<span class="small muted">Working…</span>` : ""}</div>
-    <div class="row wrap">${btn(pv ? "Redraft the plan" : "Draft the plan", "draft", {}, "primary")}
-    ${pv ? btn("Save draft", "save-draft") + btn(pv.status === "approved" ? "Save changes" : "Approve & share", "approve", {}, "primary") : ""}</div>
-    <p class="small muted">Requests close Saturday at noon${isClosed(sunday, S.now) ? " (closed)" : ""}. The app proposes; nothing reaches drivers and riders until you approve.</p>`;
+    <div class="row wrap">${open ? btn("Hide the plan", "hide-plan") : btn(pv ? "View the plan" : "Make and view the plan", "view-plan", {}, "primary")}</div>
+    <p class="small muted">Requests close Saturday at noon${isClosed(sunday, S.now) ? " (closed)" : ""}. Nothing reaches drivers and riders until you approve.</p>`;
 
-  if (pv?.travelNote) html += banner("warn", esc(pv.travelNote));
-  else if (pv?.travelSource === "estimate" && !S.config.routing.enabled) html += banner("info", "Using straight-line estimates (road routing is switched off in settings).");
-  if (pv?.warnings?.length) html += banner("warn", `<strong>Check these:</strong><ul>${pv.warnings.map((w) => `<li>${esc(w.text)}</li>`).join("")}</ul>`);
-
-  if (!pv) {
-    html += `<h3>Asking for a ride (${asking.length})</h3><ul class="plain">${asking.map((r) => { const p = people.get(r.riderId); return p ? `<li><strong>${esc(p.name)}</strong> ${esc(p.neighbourhood || "")} ${riderBadges({ ...p, rideHome: r.rideHome, extraPeople: r.extraPeople, canSplit: r.canSplit })}${r.note ? `<br><span class="small muted">${esc(r.note)}</span>` : ""}</li>` : ""; }).join("") || "<li class='muted'>Nobody yet.</li>"}</ul>`;
+  if (!open) {
+    if (!pv) {
+      html += `<h3>Asking for a ride (${asking.length})</h3><ul class="plain">${asking.map((r) => { const p = people.get(r.riderId); return p ? `<li><strong>${esc(p.name)}</strong> ${esc(p.neighbourhood || "")} ${riderBadges({ ...p, rideHome: r.rideHome, extraPeople: r.extraPeople, canSplit: r.canSplit })}${r.note ? `<br><span class="small muted">${esc(r.note)}</span>` : ""}</li>` : ""; }).join("") || "<li class='muted'>Nobody yet.</li>"}</ul>`;
+    } else {
+      html += `<p>${seatedN} seated in ${carsN} car${carsN === 1 ? "" : "s"}${waitingN ? `, ${waitingN} on the waiting list` : ""}. Tap <strong>View the plan</strong> to see the cars, make changes and approve.</p>${newcomerBanner}`;
+    }
     return html;
   }
+
+  html += `<section class="planbox" aria-label="The plan for ${esc(fmtDate(sunday))}">${newcomerBanner}`;
+  if (pv.travelNote) html += banner("warn", esc(pv.travelNote));
+  else if (pv.travelSource === "estimate" && !S.config.routing.enabled) html += banner("info", "Using straight-line estimates (road routing is switched off in settings).");
+  if (pv.warnings?.length) html += banner("warn", `<strong>Check these:</strong><ul>${pv.warnings.map((w) => `<li>${esc(w.text)}</li>`).join("")}</ul>`);
+  html += `<p class="small muted">Leave it as it is, or use <strong>Move to…</strong> under anyone to put them in another car or on the waiting list. Times update as you go.</p>`;
 
   const cardsData = groupCars(pv.assignments, S.data.profiles);
   const tripMeta = new Map((pv.trips || []).map((t) => [`${t.driverId}|${t.trip}`, t]));
@@ -348,6 +363,20 @@ function planTab(S) {
   if (pv.excluded?.length) {
     html += `<details class="card soft"><summary>${pv.excluded.length} driver(s) not driving this Sunday</summary><ul class="plain">${pv.excluded.map((e) => `<li><strong>${esc(e.name)}</strong>: ${esc(e.reason)}</li>`).join("")}</ul></details>`;
   }
+
+  // Save draft sits beside Approve & share, under the plan. Save draft is only active after a change.
+  const approvedClean = pv.status === "approved" && !pv.dirty;
+  const saveBtn = `<button class="btn ghost" type="button" data-act="save-draft" ${pv.dirty ? "" : "disabled"}>Save draft</button>`;
+  const approveBtn = approvedClean
+    ? `<button class="btn primary" type="button" disabled>Approved and shared ✓</button>`
+    : btn(pv.status === "approved" ? "Approve & share changes" : "Approve & share", "approve", {}, "primary");
+  const hint = approvedClean
+    ? "Drivers and riders can see this plan. Change anything above and you can share the update."
+    : pv.dirty
+      ? "You have changes that aren't saved. Save them as a draft for later, or approve to share them now."
+      : "No changes since it was saved. Approve to share it with drivers and riders, or change something above.";
+  html += `<div class="planactions"><div class="row wrap">${saveBtn}${approveBtn}</div><p class="small muted">${hint}</p></div>
+    <p class="small muted">Starting from scratch? ${btn("Start the plan over", "draft", {}, "link")}</p></section>`;
   return html;
 }
 

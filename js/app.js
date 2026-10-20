@@ -20,7 +20,7 @@ const S = {
   config: CONFIG, mode: IS_DEMO ? "demo" : "live",
   screen: "landing", session: null, me: null, tab: null,
   sundays: [], sunday: null, rides: [], weeks: [], routes: {},
-  data: null, planView: null, church: null, churchWarning: null, churchFound: null, formDraft: null,
+  data: null, planView: null, planOpen: false, church: null, churchWarning: null, churchFound: null, formDraft: null,
   editing: null, busy: false, toast: "", error: "", signInSent: "", regRole: null, broadcast: "",
   now: new Date(), todayISO: "", demoPeople: null, appUrl: "", demoChurchLabel: DEMO_CHURCH.label,
 };
@@ -211,7 +211,7 @@ const actions = {
   async "pick-sunday"(d) {
     if (d.sunday === S.sunday) return;
     if (S.planView?.dirty && !confirm("You have unsaved changes to this plan. Switch anyway?")) return;
-    S.sunday = d.sunday; planViewFromSaved();
+    S.sunday = d.sunday; S.planOpen = false; planViewFromSaved();
   },
   copy(d) { return copyText(d.text).then(() => say("Copied. Paste it into your message.")); },
 
@@ -230,9 +230,29 @@ const actions = {
   // leader
   async draft() {
     needChurch();
+    if (S.planView && !confirm("Start the plan over from scratch? Any changes you made by hand will be lost.")) return;
     const res = await draftPlan({ data: S.data, sunday: S.sunday, church: S.church, config: CONFIG });
     adoptResult(res, "draft");
-    say(`Draft ready: ${res.assignments.length} seated, ${res.waitlist.length} waiting.`);
+    S.planOpen = true;
+    say(`New plan ready: ${res.assignments.length} seated, ${res.waitlist.length} waiting. Review it, then save or approve.`);
+  },
+  async "view-plan"() {
+    if (!S.planView) {
+      needChurch();
+      const res = await draftPlan({ data: S.data, sunday: S.sunday, church: S.church, config: CONFIG });
+      adoptResult(res, "draft");
+      say(`Plan ready: ${res.assignments.length} seated, ${res.waitlist.length} waiting.`);
+    }
+    S.planOpen = true;
+  },
+  "hide-plan"() { S.planOpen = false; },
+  async "add-new"() {
+    needChurch();
+    const current = S.planView;
+    const res = await draftPlan({ data: S.data, sunday: S.sunday, church: S.church, config: CONFIG, keep: current.assignments });
+    adoptResult(res, current.status);
+    S.planOpen = true;
+    say("New requests added. Everyone else stayed where they were. Review, then save or approve.");
   },
   async "save-draft"() { await persistPlan("draft"); say("Draft saved. Drivers and riders can't see it yet."); },
   async approve() {

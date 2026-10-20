@@ -87,3 +87,7 @@ summary{cursor:pointer;font-weight:600}
 .ok-text{color:var(--ok);font-weight:600} .warn-text{color:var(--clay);font-weight:600}
 .leave{margin:.2rem 0 .6rem;font-size:1.05rem}
 .suggest .searching{font-size:.85rem;font-style:italic}
+.planbox{border-top:2px solid var(--line);margin-top:.6rem;padding-top:.4rem}
+.planactions{position:sticky;bottom:0;background:var(--paper);border-top:1px solid var(--line);padding:.7rem 0 calc(.6rem + env(safe-area-inset-bottom,0px));margin-top:.8rem;z-index:4}
+.planactions .row{gap:.6rem}
+.btn[disabled]{opacity:.55;cursor:not-allowed}
