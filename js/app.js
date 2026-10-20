@@ -14,6 +14,8 @@ import { shell, landingView, signInView, demoPickerView, roleView, esc } from ".
 import { lastMinuteBroadcast } from "./texts.js";
 import { setServices, upcomingDays, configFor, serviceFor } from "./services.js";
 import { DEMO_CHURCH } from "./demo-data.js";
+import { pushState, turnOn, turnOff, resync } from "./push.js";
+import { approvalPings } from "./notify.js";
 
 const root = document.getElementById("app");
 let store;
@@ -51,6 +53,17 @@ function render() {
 }
 
 const say = (msg) => { S.toast = msg; };
+
+// After anything that may notify someone, ask the sender to deliver what's waiting (a moment later,
+// so several quick changes go out together). Clicks that only look at things don't.
+const READ_ONLY = new Set(["home", "demo-start", "goto-signin", "reg-back", "reg-role", "signin-reset", "tab", "pick-sunday", "copy",
+  "export-people", "export-backup", "view-plan", "hide-plan", "edit", "edit-cancel", "refresh-now", "push-later", "viewas", "signout"]);
+let flushTimer = null;
+function flushSoon() {
+  if (!S.session || typeof store?.flushPush !== "function") return;
+  clearTimeout(flushTimer);
+  flushTimer = setTimeout(() => store.flushPush(), 1200);
+}
 
 async function guarded(fn) {
   S.error = "";
@@ -164,6 +177,11 @@ async function load() {
   }
   S.appUrl = location.href.split("#")[0].split("?")[0];
   if (!S.me) return;
+  if (!S.push) {
+    S.push = S.mode === "demo" ? null : await pushState().catch(() => "unsupported");
+    try { S.pushLater = localStorage.getItem("cgc-push-later") === "1"; } catch { S.pushLater = false; }
+    if (S.push === "on") resync(store); // this device follows whoever is signed in now
+  }
   await resolveChurch();
   const defaults = { leader: "plan", driver: "sundays", rider: "rides" };
   if (!S.tab || (S.me.role === "leader" && !["plan", "people", "alerts", "texts", "services", "driving"].includes(S.tab)) ||
@@ -259,7 +277,15 @@ function planSummary() {
 
 async function persistPlan(status) {
   const pv = S.planView;
+  const before = S.data?.plans?.[S.sunday] || null;
   await store.savePlan(S.sunday, status, planSummary(), pv.assignments.map((a) => ({ riderId: a.riderId, driverId: a.driverId, trip: a.trip, order: a.order ?? 0, seats: a.seats ?? 1, pickupMin: a.pickupMin ?? null, readyByMin: a.readyByMin ?? null, arriveMin: a.arriveMin ?? null, departMin: a.departMin ?? null })), pv.waitlist);
+  if (status === "approved") {
+    // Ping the people whose ride changed (only those with notifications on receive it).
+    try {
+      const pings = approvalPings({ before, after: pv, sunday: S.sunday, profilesById: new Map(S.data.profiles.map((p) => [p.id, p])) });
+      await store.queuePush(pings);
+    } catch (err) { console.warn("Couldn't queue notifications", err); }
+  }
   S.planView = null;
   await reload();
 }
@@ -434,6 +460,14 @@ const actions = {
     await reload();
     say(back ? `${p.name} is now ${words}.` : `${p.name} is now ${words}. They'll see the leader screens next time they open the app.`);
   },
+  async "push-on"() {
+    if (S.push === "ios-install") return;
+    S.push = await turnOn(store); // asks the browser straight from the tap
+    if (S.push === "on") say("Notifications are on. We'll ping this device when something changes for you.");
+    else if (S.push === "blocked") S.error = "Notifications were blocked. See My details for how to allow them.";
+  },
+  async "push-off"() { S.push = await turnOff(store); say("Notifications turned off for this device."); },
+  "push-later"() { S.pushLater = true; try { localStorage.setItem("cgc-push-later", "1"); } catch {} say("No problem. You can turn notifications on any time from My details."); },
   async "remove-person"(d) {
     const p = S.data.profiles.find((x) => x.id === d.id);
     if (!p) return;
@@ -686,7 +720,7 @@ root.addEventListener("click", (e) => {
   const el = e.target.closest("[data-act]");
   if (!el || el.tagName === "SELECT") return;
   const fn = actions[el.dataset.act];
-  if (fn) { e.preventDefault(); guarded(() => fn(el.dataset)); }
+  if (fn) { e.preventDefault(); guarded(() => fn(el.dataset)).then(() => { if (!READ_ONLY.has(el.dataset.act)) flushSoon(); }); }
 });
 root.addEventListener("change", (e) => {
   const el = e.target.closest("[data-act-change]");
@@ -700,7 +734,7 @@ root.addEventListener("submit", (e) => {
   const form = e.target.closest("form[data-form]");
   if (!form) return;
   e.preventDefault();
-  guarded(() => onSubmit(form));
+  guarded(() => onSubmit(form)).then(flushSoon);
 });
 
 // ---------------------------------------------------------------- start
@@ -796,5 +830,9 @@ window.addEventListener("focus", () => refreshNow());
     S.error = `Couldn't start the app: ${err.message}`;
   }
   render();
-  if ("serviceWorker" in navigator) { /* intentionally none: the app always loads fresh */ }
+  // The service worker only handles notifications (it caches nothing, so the app always loads fresh).
+  if (S.mode !== "demo" && CONFIG.push?.publicKey && "serviceWorker" in navigator) {
+    navigator.serviceWorker.register("sw.js").catch((err) => console.warn("Service worker", err));
+    navigator.serviceWorker.addEventListener("message", (e) => { if (e.data?.type === "refresh") refreshNow(); });
+  }
 })();

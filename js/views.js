@@ -32,6 +32,34 @@ function riderBadges(r) {
   ].filter(Boolean).join(" ");
 }
 
+// ---------------------------------------------------------------- phone notifications
+
+const PUSH_WHAT = {
+  rider: "when your ride is confirmed or changes",
+  driver: "when your route is ready, and when someone needs a last-minute ride",
+  leader: "for new alerts, new drivers to approve, and your own driving",
+};
+
+/** The notifications card: an invitation when off, a short line (on the details tab) when on. */
+export function pushCard(S) {
+  const st = S.push;
+  const role = S.me?.role;
+  const detailsTab = S.tab === "details" || S.tab === "driving";
+  if (!st || st === "unsupported" || st === "not-set-up") return "";
+  if (st === "on") return detailsTab ? `<p class="small muted pushline">🔔 Notifications are on for this device. ${btn("Turn off", "push-off", {}, "link")}</p>` : "";
+  if (S.pushLater && !detailsTab) return "";
+  const later = detailsTab ? "" : btn("Not now", "push-later", {}, "link");
+  if (st === "ios-install") return `<article class="card pushcard"><h3>🔔 Get notified on your iPhone</h3>
+    <p class="small">iPhones only send notifications from the app on your home screen. It takes a moment:</p>
+    <ol class="small"><li>In Safari, tap the <strong>Share</strong> button (the square with an arrow).</li><li>Tap <strong>Add to Home Screen</strong>, then <strong>Add</strong>.</li><li>Open <strong>CGC Rides</strong> from your home screen, sign in, and tap <strong>Allow notifications</strong>.</li></ol>
+    ${later}</article>`;
+  if (st === "blocked") return detailsTab ? `<article class="card pushcard"><h3>🔔 Notifications are blocked</h3>
+    <p class="small">You said no earlier, so your browser won't ask again. To allow them: on Android (Chrome), tap the icon left of the web address → <strong>Permissions</strong> (or Site settings) → <strong>Notifications</strong> → <strong>Allow</strong>. On iPhone: <strong>Settings → Notifications → CGC Rides</strong> → Allow. Then come back here.</p></article>` : "";
+  return `<article class="card pushcard"><h3>🔔 Get a notification ${esc(PUSH_WHAT[role] || PUSH_WHAT.rider)}</h3>
+    <p class="small muted">Works even when the app is closed. You can turn it off any time.</p>
+    <div class="row wrap">${btn("Allow notifications", "push-on", {}, "primary")}${later}</div></article>`;
+}
+
 // ---------------------------------------------------------------- shell + entry screens
 
 export function shell(S, inner) {
@@ -482,22 +510,36 @@ function teamSection(S) {
   return html;
 }
 
+// People who signed in with their email but never filled in their details.
+function unregisteredBox(S) {
+  const list = S.data.unregistered || [];
+  if (!list.length) return "";
+  const when = (iso) => (iso ? fmtDate(String(iso).slice(0, 10), { month: "short", day: "numeric" }) : "");
+  const msg = `Hi! You started signing up for ${S.config.appName} but didn't finish. Open ${S.appUrl || "the app"}, sign in with this email, and fill in your details so we can include you for rides. Thank you!`;
+  return `<article class="card soft"><h3>Signed in but not registered (${list.length})</h3>
+    <p class="small muted">These people entered their email and code but never filled in their details, so they can't ask for rides or drive yet. Send them a reminder. They drop off this list once they finish.</p>
+    <ul class="plain">${list.map((u) => `<li class="personrow"><div><strong>${esc(u.email)}</strong><br><span class="small muted">signed in ${esc(when(u.lastSignInAt || u.signedUpAt))}</span></div>${btn("Copy email", "copy", { text: u.email })}</li>`).join("")}</ul>
+    <p>${btn("Copy reminder message", "copy", { text: msg })}</p></article>`;
+}
+
 function peopleTab(S) {
   if (S.editing) {
     const p = S.editing === "new" ? { role: "rider" } : S.data.profiles.find((x) => x.id === S.editing);
     return `<section class="card"><h2>${S.editing === "new" ? "Add a rider who phoned in" : esc(p.name)}</h2>${profileForm(S, p, { leaderEditing: true, addingForSunday: S.editing === "new" ? S.sunday : null })}
       ${S.editing !== "new" && p.role !== "leader" ? `<hr><h3>Remove ${esc(firstName(p.name))}</h3><p class="small muted">Deletes this person with their requests, availability and rides (for example a test name). Any plan they are in goes back to a draft so you can redo it. This cannot be undone.</p>${btn("Remove " + firstName(p.name), "remove-person", { id: p.id })}` : ""}</section>`;
   }
+  const pushOn = new Set(S.data.pushPeople || []);
+  const pushMark = (p) => (pushOn.has(p.id) ? " · 🔔 notifications on" : "");
   const drivers = S.data.profiles.filter((p) => isDriver(p) || (p.role === "driver"));
   const riders = S.data.profiles.filter((p) => p.role === "rider");
   const dRow = (d) => {
     const left = daysLeft(d.policeCheckExpiry, S.todayISO);
     const st = d.status === "cleared" ? badge("Cleared", "ok") : badge(d.status === "pending" ? "Needs your approval" : d.status, d.status === "pending" ? "clay" : "red");
     const checkNote = d.policeCheckExpiry ? `check ${left != null && left < 0 ? "EXPIRED " : "to "}${esc(d.policeCheckExpiry)}` : "no check date noted";
-    return `<li class="personrow"><div><strong>${esc(d.name)}</strong> ${st}<br><span class="small muted">${esc(d.seats)} seats · ${esc(d.neighbourhood || "no area")} · ${checkNote} · licence ${d.licenceOk ? "✓" : "–"} · insurance ${d.insuranceOk ? "✓" : "–"}</span></div>${btn("Edit / review", "edit", { id: d.id })}</li>`;
+    return `<li class="personrow"><div><strong>${esc(d.name)}</strong> ${st}<br><span class="small muted">${esc(d.seats)} seats · ${esc(d.neighbourhood || "no area")} · ${checkNote} · licence ${d.licenceOk ? "✓" : "–"} · insurance ${d.insuranceOk ? "✓" : "–"}${pushMark(d)}</span></div>${btn("Edit / review", "edit", { id: d.id })}</li>`;
   };
-  const rRow = (r) => `<li class="personrow"><div><strong>${esc(r.name)}</strong> ${riderBadges(r)}<br><span class="small muted">${esc(r.neighbourhood || "")} · ${r.textsConsentAt ? "texts OK" : "no text consent"}${r.weeklyCheckin ? " · weekly check-in" : ""}</span></div>${btn("Edit", "edit", { id: r.id })}</li>`;
-  return `${teamSection(S)}<div class="row wrap">${btn("Add a rider who phoned in", "edit", { id: "new" }, "primary")}</div>
+  const rRow = (r) => `<li class="personrow"><div><strong>${esc(r.name)}</strong> ${riderBadges(r)}<br><span class="small muted">${esc(r.neighbourhood || "")} · ${r.textsConsentAt ? "texts OK" : "no text consent"}${r.weeklyCheckin ? " · weekly check-in" : ""}${pushMark(r)}</span></div>${btn("Edit", "edit", { id: r.id })}</li>`;
+  return `${teamSection(S)}${unregisteredBox(S)}<div class="row wrap">${btn("Add a rider who phoned in", "edit", { id: "new" }, "primary")}</div>
     <h3>Drivers (${drivers.length})</h3><ul class="plain">${drivers.map(dRow).join("") || "<li class='muted'>No drivers yet.</li>"}</ul>
     <h3>Riders (${riders.length})</h3><ul class="plain">${riders.map(rRow).join("") || "<li class='muted'>No riders yet.</li>"}</ul>
     <h3>Keep a copy</h3>
@@ -684,7 +726,7 @@ export function leaderView(S) {
   const openAlerts = S.data.alerts.filter((a) => !a.resolved).length;
   const tabs = [["plan", "Plan"], ["people", "People"], ["alerts", `Alerts${openAlerts ? ` (${openAlerts})` : ""}`], ["texts", "Texts"], ["services", "Services"], ["driving", "My driving"]];
   const body = { plan: planTab, people: peopleTab, alerts: alertsTab, texts: textsTab, services: servicesTab, driving: drivingTab }[S.tab] || planTab;
-  return `<nav class="tabs">${tabs.map(([k, l]) => `<button type="button" class="${S.tab === k ? "on" : ""}" data-act="tab" data-tab="${k}">${esc(l)}</button>`).join("")}</nav>${body(S)}`;
+  return `<nav class="tabs">${tabs.map(([k, l]) => `<button type="button" class="${S.tab === k ? "on" : ""}" data-act="tab" data-tab="${k}">${esc(l)}</button>`).join("")}</nav>${pushCard(S)}${body(S)}`;
 }
 
 export function tabsFor(S, tabs) {
@@ -694,8 +736,8 @@ export function tabsFor(S, tabs) {
 export function roleView(S) {
   if (!S.me) return registerView(S);
   if (S.me.role === "leader") return leaderView(S);
-  if (S.me.role === "driver") return tabsFor(S, [["sundays", "My Sundays"], ["details", "My details"]]) + driverView(S);
-  return tabsFor(S, [["rides", "Rides"], ["details", "My details"]]) + riderView(S);
+  if (S.me.role === "driver") return tabsFor(S, [["sundays", "My Sundays"], ["details", "My details"]]) + pushCard(S) + driverView(S);
+  return tabsFor(S, [["rides", "Rides"], ["details", "My details"]]) + pushCard(S) + riderView(S);
 }
 
 // ---------------------------------------------------------------- last-minute help

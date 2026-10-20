@@ -10,3 +10,6 @@ create role authenticated nologin;
 create role service_role nologin;
 grant usage on schema auth to anon, authenticated, service_role;
 grant execute on all functions in schema auth to anon, authenticated, service_role;
+alter table auth.users add column if not exists created_at timestamptz not null default now();
+alter table auth.users add column if not exists last_sign_in_at timestamptz;
+alter role service_role bypassrls; -- as in Supabase

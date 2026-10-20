@@ -109,3 +109,37 @@ People tab → **Edit** on a rider or driver → **Remove** (at the bottom). It 
 - **Drivers see when to leave.** Each pickup list starts with "Leave home by …" (or "Leave church by …" for a second trip).
 - **Database update:** run `supabase/update-2026-10-20-confirmed-addresses.sql` once in the Supabase SQL Editor (safe to run twice). New projects only need `schema.sql`.
 - The address services are free and need no key; they are called from each person's browser. They were not reachable from the build environment, so their answers were tested with sample replies in their documented formats (`tests/addresses.test.mjs`). Try a few real addresses after updating.
+
+## Team roles (added 20 Oct 2026)
+
+One **supervisor** and up to two leaders (Leader and Assistant leader). Only the supervisor can
+make a signed-in person a leader, move a leader back to driver or rider, or hand the supervisor
+role over (People → Team). The database enforces this and logs every change (`team_log`).
+If a supervisor ever leaves without handing over, someone with the Supabase login can make a new
+one in the SQL Editor:
+
+```sql
+update profiles set is_supervisor = false where is_supervisor;
+update profiles set role = 'leader', is_supervisor = true, leader_title = 'Supervisor'
+ where lower(email) = lower('new.supervisor@example.com');
+```
+
+## Phone notifications (added 21 Oct 2026)
+
+People tap **Allow notifications** once per device. They are pinged when:
+- riders: their ride is confirmed or changes (sent when a leader approves the plan);
+- drivers: their route is ready or changes, or they're asked for a last-minute ride;
+- leaders: a new alert, or a new driver waiting for approval.
+
+iPhones only allow this from the home-screen app (Share → Add to Home Screen, iOS 16.4+); the app
+shows iPhone users how. Messages wait in `push_queue`; the **send-push** Edge Function
+(`supabase/functions/send-push/index.ts`, no libraries) sends them with the Web Push standard and is
+called by the app after each change. `sw.js` only shows notifications; it caches nothing.
+
+Setup, once: run the SQL update; in Supabase → Edge Functions, create `send-push` and paste the
+file; add the secrets `VAPID_PUBLIC_KEY` (same as `push.publicKey` in `js/config.js`) and
+`VAPID_PRIVATE_KEY`. To make a new key pair: `node -e "const k=require('crypto').createECDH('prime256v1');k.generateKeys();console.log(k.getPublicKey('base64url'),k.getPrivateKey('base64url'))"`
+(then update both places; everyone has to allow notifications again).
+
+Leaders also see **Signed in but not registered**: people who entered their email and code but
+never filled in their details, with a reminder message to copy.

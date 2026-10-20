@@ -137,10 +137,15 @@ export function createDemoStore({ now = () => new Date() } = {}) {
     // ---- leader
     async leaderData() {
       need(isLeader(), "Only the transport leader can see this.");
-      return fresh({ profiles: db.profiles, requests: db.requests, weeks: db.weeks, plans: db.plans, alerts: db.alerts, consentLog: db.consentLog, helpRequests: db.help, teamLog: db.teamLog });
+      return fresh({ profiles: db.profiles, requests: db.requests, weeks: db.weeks, plans: db.plans, alerts: db.alerts, consentLog: db.consentLog, helpRequests: db.help, teamLog: db.teamLog,
+        unregistered: db.unregistered, pushPeople: ["d-grace", "r-mary"] });
     },
 
     // ---- team (same rules as the database: only the supervisor; two leaders besides them at most)
+    // ---- phone notifications: not sent in the demo
+    async savePushSub() {}, async removePushSub() {}, async queuePush(items) { db.pushLog.push(...items); return items.length; }, async flushPush() { return null; },
+    pushLog() { return db.pushLog; },
+
     async setTeamRole(id, role) {
       const m = me();
       need(m?.isSupervisor, "Only the supervisor can change who leads.");

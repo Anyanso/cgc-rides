@@ -140,6 +140,8 @@ export async function createLiveStore(config, { createClient } = {}) {
         from("help_asks").select("*"),
         from("team_log").select("*").order("at", { ascending: false }).limit(50),
       ]);
+      // These need the 21 Oct database update; until then, empty.
+      const [ur, pp] = await Promise.all([sb.rpc("unregistered_people"), sb.rpc("push_people")]);
       for (const r of [pr, rq, wk, pl, as, wl, al, cl]) fail(r);
       // Last-minute requests need the 20 Oct (afternoon) database update; until then, there are none.
       const helpRequests = hr.error || ha.error ? [] : hr.data.map((h) => ({
@@ -166,7 +168,23 @@ export async function createLiveStore(config, { createClient } = {}) {
         helpRequests,
         // Team changes need the 20 Oct (evening) database update; until then, none.
         teamLog: tl.error ? [] : tl.data.map((t) => ({ at: t.at, actorName: t.actor_name, targetName: t.target_name, change: t.change })),
+        unregistered: ur.error ? [] : ur.data.map((u) => ({ email: u.email, signedUpAt: u.signed_up_at, lastSignInAt: u.last_sign_in_at })),
+        pushPeople: pp.error ? [] : pp.data.map((x) => (typeof x === "string" ? x : x.push_people)),
       };
+    },
+    // ---- phone notifications
+    async savePushSub({ endpoint, p256dh, auth, device }) { await rpc("save_push_sub", { p_endpoint: endpoint, p_p256dh: p256dh, p_auth: auth, p_device: device }); },
+    async removePushSub(endpoint) { await rpc("remove_push_sub", { p_endpoint: endpoint }); },
+    /** Leaders: queue messages for people (only those with notifications on get them). */
+    async queuePush(items) {
+      if (!items.length) return 0;
+      return rpc("queue_push", { p_items: items.map((i) => ({ profile_id: i.profileId, title: i.title, body: i.body, tag: i.tag })) });
+    },
+    /** Asks the send-push function to send whatever is waiting. Never throws. */
+    async flushPush() {
+      if (!config.push?.publicKey) return null;
+      try { const { data, error } = await sb.functions.invoke(config.push.functionName || "send-push", { body: {} }); if (error) throw error; return data; }
+      catch (err) { console.warn("Couldn't send notifications", err); return null; }
     },
     /** Supervisor only: make someone 'leader' / 'assistant', or move them back to 'driver' / 'rider'. */
     async setTeamRole(id, role) { return rpc("set_team_role", { p_profile: id, p_role: role }); },

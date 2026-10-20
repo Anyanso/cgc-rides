@@ -67,5 +67,6 @@ export function makeDemoState(now = new Date()) {
     { driverId: "d-ruth", sunday: first, available: true },
     { driverId: "d-daniel", sunday: sundays[1], available: false, note: "Away" },
   ];
-  return { sundays, profiles, requests, weeks, plans: {}, alerts: [], consentLog: [], help: [], services: [], teamLog: [] };
+  return { sundays, profiles, requests, weeks, plans: {}, alerts: [], consentLog: [], help: [], services: [], teamLog: [], pushLog: [],
+    unregistered: [{ email: "vanessa.example@demo.invalid", signedUpAt: inDays(-1), lastSignInAt: inDays(-1) }] };
 }

@@ -32,6 +32,13 @@ export const CONFIG = {
 
   weeksAhead: 4,
 
+  // Phone notifications. The public half of the app's notification key (the private half is a
+  // secret in Supabase -> Edge Functions -> Secrets). Leave empty to hide notifications.
+  push: {
+    publicKey: "BEBQ8o5aaksbngNEuRFxMgvQberSS0DQLq46g_YQAhbnDin6GnYiuKQD_ZObDfNzAVaXRj5El-WIdNmoj_dEn5k",
+    functionName: "send-push",
+  },
+
   // 2) Leave both empty to run in DEMO mode (sample data, nothing saved to a server).
   //    Paste your Supabase project URL and anon key to go live.
   supabase: {
