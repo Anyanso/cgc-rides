@@ -34,7 +34,7 @@ create table if not exists profiles (
   lng                double precision,
   -- 'verified' = confirmed on the map to the house number; the ONLY locations (with 'manual') used for matching.
   -- 'address' / 'neighbourhood' are older, unchecked lookups kept for history; they are never matched.
-  geo_source         text check (geo_source in ('verified', 'address', 'neighbourhood', 'manual', 'none')),
+  geo_source         text,
   -- rider details
   minor              boolean not null default false,
   priority           boolean not null default false,          -- leader sets (e.g. seniors, no other way to church)
@@ -222,6 +222,10 @@ create table if not exists push_queue (
   sent_at    timestamptz
 );
 create index if not exists push_queue_unsent_idx on push_queue (created_at) where sent_at is null;
+
+-- Where a home's location came from. 'pin': the person placed a pin on their house themselves.
+alter table profiles drop constraint if exists profiles_geo_source_check;
+alter table profiles add constraint profiles_geo_source_check check (geo_source in ('verified', 'address', 'neighbourhood', 'manual', 'pin', 'none'));
 
 create index if not exists assignments_driver_idx on assignments (driver_id);
 create index if not exists requests_sunday_idx on ride_requests (sunday);

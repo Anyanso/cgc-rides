@@ -6,7 +6,7 @@ import { createDemoStore } from "./store-demo.js";
 import { peopleCsv, backupJson, stamp, download } from "./backup.js";
 import { toISO, fmtDate, fmtMin, toMin } from "./dates.js";
 const fmtMinLabel = (hhmm) => fmtMin(toMin(hhmm));
-import { confirmAddress, suggestAddresses, refineSuggestions, normalizePhone, normalizePostal, isConfirmed } from "./geo.js";
+import { confirmAddress, suggestAddresses, refineSuggestions, normalizePhone, normalizePostal, isConfirmed, houseNumberOf, inSaskatoon, reverseLookup, locateStreet, nearestNeighbourhood } from "./geo.js";
 import { driverIssue } from "./matching.js";
 import { draftPlan, recompute, applyMove, reassignDriver, sundayPeople, rankHelpers } from "./planner.js";
 import { driverAvailable, CONSENT_WORDING, isDriver } from "./models.js";
@@ -217,6 +217,8 @@ function readProfile(form) {
   const out = { name: text("name"), phone: text("phone"), address: text("address"), postalCode: text("postalCode"), neighbourhood: text("neighbourhood"), minor: bool("minor"), notes: text("notes") };
   // Filled in when the person picks a suggestion (cleared again if they edit the address).
   out.picked = text("pickedAddress") ? { address: text("pickedAddress"), lat: num("pickedLat"), lng: num("pickedLng") } : null;
+  // A pin the person placed on their house (phone location or by hand).
+  out.pin = num("pinLat") != null && num("pinLng") != null ? { lat: num("pinLat"), lng: num("pinLng") } : null;
   if (has("role")) out.role = text("role");
   if (has("alsoDrives")) out.status = bool("alsoDrives") ? "cleared" : "none";
   if (has("seats")) Object.assign(out, { seats: Number(f.get("seats")) || 0, vehicle: text("vehicle"), drivesEveryWeek: bool("drivesEveryWeek"), secondTrip: bool("secondTrip") });
@@ -234,7 +236,7 @@ function readProfile(form) {
  * Returns { patch, warning }.
  */
 async function checkProfile(raw, previous = {}, { strict }) {
-  const { picked, ...patch } = raw;
+  const { picked, pin, ...patch } = raw;
   if (!patch.name) throw new Error("Please enter the full name.");
   const phone = normalizePhone(patch.phone);
   if (!phone) throw new Error("Please enter a 10-digit phone number, for example 306-555-0142.");
@@ -245,7 +247,13 @@ async function checkProfile(raw, previous = {}, { strict }) {
 
   const unchanged = patch.address === previous.address && isConfirmed(previous);
   let warning = "";
-  if (unchanged) {
+  if (pin) {
+    // The person put a pin on their house: their typed address is kept, the pin gives the location.
+    if (!houseNumberOf(patch.address)) throw new Error("Please type the address starting with the house number (for example 1666 Stonebridge Blvd), so the driver knows which door.");
+    if (!inSaskatoon(pin.lat, pin.lng)) throw new Error("The pin is outside Saskatoon. Move it onto the house and try again.");
+    Object.assign(patch, { lat: pin.lat, lng: pin.lng, geoSource: "pin" });
+    if (!patch.neighbourhood) patch.neighbourhood = nearestNeighbourhood(pin.lat, pin.lng);
+  } else if (unchanged) {
     Object.assign(patch, { lat: previous.lat, lng: previous.lng, geoSource: previous.geoSource, neighbourhood: previous.neighbourhood || patch.neighbourhood });
   } else {
     const g = await confirmAddress(patch.address, { nominatimUrl: CONFIG.geocoding.nominatimUrl, postcode: typedPostal });
@@ -256,7 +264,7 @@ async function checkProfile(raw, previous = {}, { strict }) {
       if (ok.neighbourhood) patch.neighbourhood = ok.neighbourhood;
       if (!typedPostal && ok.postcode) patch.postalCode = ok.postcode;
     } else if (strict) {
-      throw new Error(g.reason);
+      throw new Error(`${g.reason} If your home isn't on the map yet, tap "Place a pin on the map" under the address.`);
     } else {
       Object.assign(patch, { lat: null, lng: null, geoSource: "none" });
       warning = ` Address not confirmed (${g.reason}) This person won't be matched until it is.`;
@@ -675,7 +683,9 @@ root.addEventListener("input", (e) => {
   const box = form.querySelector(".suggest");
   const status = form.querySelector(".addr-status");
   setPicked(form, null);
-  status.innerHTML = '<span class="warn-text">Not confirmed yet.</span> Pick your address from the list, or save and we\'ll check it.';
+  status.innerHTML = field(form, "pinLat")?.value
+    ? '<span class="ok-text">📍 Your pin is still on the house.</span> Just make sure the address starts with the house number.'
+    : '<span class="warn-text">Not confirmed yet.</span> Pick your address from the list. Not there? Use one of the options below.';
   clearTimeout(suggestTimer);
   const q = input.value;
   const key = q.trim().toLowerCase().replace(/\s+/g, " ");
@@ -707,6 +717,7 @@ function pickSuggestion(btn) {
   if (!s || !form) return;
   field(form, "address").value = s.address;
   setPicked(form, s);
+  if (field(form, "pinLat")) { field(form, "pinLat").value = ""; field(form, "pinLng").value = ""; }
   if (s.postcode && field(form, "postalCode")) field(form, "postalCode").value = s.postcode;
   if (s.neighbourhood && field(form, "neighbourhood")) { field(form, "neighbourhood").value = s.neighbourhood; form.querySelector(".hood-name").textContent = s.neighbourhood; }
   form.querySelector(".addr-status").innerHTML = `<span class="ok-text">✓ Found on the map${s.neighbourhood ? ` · ${esc(s.neighbourhood)}` : ""}</span>${s.postcode ? "" : " Please type your postal code below."}`;
@@ -717,6 +728,8 @@ function pickSuggestion(btn) {
 root.addEventListener("click", (e) => {
   const sug = e.target.closest(".suggestion");
   if (sug) { e.preventDefault(); pickSuggestion(sug); return; }
+  const pinBtn = e.target.closest("[data-pin]");
+  if (pinBtn) { e.preventDefault(); onPin(pinBtn); return; }
   const el = e.target.closest("[data-act]");
   if (!el || el.tagName === "SELECT") return;
   const fn = actions[el.dataset.act];
@@ -748,6 +761,7 @@ const REFRESH_MS = 30000;
 let refreshing = false;
 
 function formInUse() {
+  if (root.querySelector(".pinbox:not([hidden])")) return true; // placing a pin
   const a = document.activeElement;
   if (a && root.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return true;
   for (const el of root.querySelectorAll("input, textarea, select")) {
@@ -836,3 +850,91 @@ window.addEventListener("focus", () => refreshNow());
     navigator.serviceWorker.addEventListener("message", (e) => { if (e.data?.type === "refresh") refreshNow(); });
   }
 })();
+
+
+// ---------------------------------------------------------------- placing a pin on the house
+// For homes the map service doesn't list by house number: the person uses their phone's location
+// (when at home) or drags a pin onto their house. Their typed address is kept; the pin is the spot.
+
+const LEAFLET = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/";
+let leafletReady = null;
+function loadLeaflet() {
+  if (window.L) return Promise.resolve(window.L);
+  if (!leafletReady) leafletReady = new Promise((resolve, reject) => {
+    const css = document.createElement("link"); css.rel = "stylesheet"; css.href = LEAFLET + "leaflet.css"; document.head.appendChild(css);
+    const js = document.createElement("script"); js.src = LEAFLET + "leaflet.js";
+    js.onload = () => resolve(window.L);
+    js.onerror = () => { leafletReady = null; reject(new Error("The map couldn't load. Check your internet connection and try again.")); };
+    document.head.appendChild(js);
+  });
+  return leafletReady;
+}
+
+function phoneLocation() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) return reject(new Error("This phone or browser can't share its location."));
+    navigator.geolocation.getCurrentPosition(
+      (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude, accuracy: Math.round(p.coords.accuracy || 0) }),
+      (err) => reject(new Error(err.code === 1
+        ? "Location was not allowed. You can allow it in your browser settings, or place the pin by hand instead."
+        : "We couldn't get your location just now. Try again outside or near a window, or place the pin by hand.")),
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
+  });
+}
+
+async function onPin(btn) {
+  const form = btn.closest("form");
+  const box = form.querySelector(".pinbox");
+  const help = box.querySelector(".pin-help");
+  const status = form.querySelector(".addr-status");
+  const mode = btn.dataset.pin;
+  if (mode === "cancel") { box.hidden = true; return; }
+  if (mode === "done") {
+    const m = box._marker;
+    if (!m) return;
+    const { lat, lng } = m.getLatLng();
+    if (!inSaskatoon(lat, lng)) { help.innerHTML = `<span class="warn-text">That spot is outside Saskatoon. Drag the pin onto the house.</span>`; return; }
+    field(form, "pinLat").value = lat.toFixed(6);
+    field(form, "pinLng").value = lng.toFixed(6);
+    setPicked(form, null);
+    box.hidden = true;
+    const typed = field(form, "address").value.trim();
+    status.innerHTML = `<span class="ok-text">📍 Pin placed on the house.</span>${houseNumberOf(typed) ? " Save to finish." : ` <span class="warn-text">Now type the house number and street above, so the driver knows which door.</span>`}`;
+    // Fill the postal code and neighbourhood if they're empty (best effort).
+    const r = await reverseLookup(lat, lng, { nominatimUrl: CONFIG.geocoding.nominatimUrl });
+    const pc = field(form, "postalCode");
+    if (pc && !pc.value.trim() && r.postcode) pc.value = r.postcode;
+    const hood = r.neighbourhood || nearestNeighbourhood(lat, lng);
+    if (hood && field(form, "neighbourhood")) { field(form, "neighbourhood").value = hood; const h = form.querySelector(".hood-name"); if (h) h.textContent = hood; }
+    if (!typed && r.address && houseNumberOf(r.address)) { field(form, "address").value = r.address; status.innerHTML = `<span class="ok-text">📍 Pin placed on the house.</span> Check the address above is right, then save.`; }
+    return;
+  }
+
+  // Open the map ("gps" = start at the phone's location, "map" = start near the typed street).
+  box.hidden = false;
+  help.textContent = mode === "gps" ? "Finding where you are…" : "Loading the map…";
+  let start = null, zoom = 18, note = "";
+  try {
+    const [L] = await Promise.all([loadLeaflet(), mode === "gps" ? phoneLocation().then((p) => { start = p; }) : Promise.resolve()]);
+    if (mode === "gps") {
+      if (!inSaskatoon(start.lat, start.lng)) note = "Your phone seems to be outside Saskatoon right now. If you're not at home, drag the pin onto your house instead. ";
+      else note = `We put the pin where your phone is${start.accuracy ? ` (accurate to about ${start.accuracy} m)` : ""}. `;
+    } else {
+      const typed = field(form, "address").value.trim();
+      const near = lastList[0] || (typed ? await locateStreet(typed.replace(/^\s*\d+[A-Za-z]?\s*/, ""), { photonUrl: CONFIG.geocoding.photonUrl }) : null);
+      start = near ? { lat: near.lat, lng: near.lng } : (S.church || { lat: 52.1332, lng: -106.67 });
+      if (!near) zoom = 13;
+    }
+    if (box._map) { box._map.remove(); box._map = null; }
+    const map = L.map(box.querySelector(".pinmap"), { zoomControl: true, attributionControl: true }).setView([start.lat, start.lng], zoom);
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap contributors" }).addTo(map);
+    const marker = L.marker([start.lat, start.lng], { draggable: true, autoPan: true }).addTo(map);
+    map.on("click", (ev) => marker.setLatLng(ev.latlng));
+    box._map = map; box._marker = marker;
+    setTimeout(() => map.invalidateSize(), 50);
+    help.innerHTML = `${note}${zoom < 18 ? "Zoom in to your street, then " : ""}Drag the pin (or tap the map) onto the house, then tap <strong>This is ${S.me?.role === "leader" && S.editing ? "the" : "my"} house</strong>.`;
+    box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  } catch (err) {
+    help.innerHTML = `<span class="warn-text">${esc(err.message)}</span>${mode === "gps" ? ` <button type="button" class="btn link" data-pin="map">Place the pin by hand</button>` : ""}`;
+  }
+}

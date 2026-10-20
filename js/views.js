@@ -130,9 +130,9 @@ export function profileForm(S, p0 = {}, { leaderEditing = false, registering = f
   const req = `<span class="req" aria-hidden="true">*</span>`;
   const confirmed = isConfirmed(p0) && p.address === p0.address;
   const addrStatus = confirmed
-    ? `<span class="ok-text">✓ Confirmed on the map${p0.neighbourhood ? ` · ${esc(p0.neighbourhood)}` : ""}</span>`
+    ? `<span class="ok-text">✓ ${p0.geoSource === "pin" ? "Pin placed on the map" : "Confirmed on the map"}${p0.neighbourhood ? ` · ${esc(p0.neighbourhood)}` : ""}</span>`
     : p.address
-      ? `<span class="warn-text">Not confirmed yet. Pick your address from the list, or save and we'll check it.</span>`
+      ? `<span class="warn-text">Not confirmed yet.</span> Pick your address from the list. Not there? Use one of the options below.`
       : "Start typing your house number and street, then pick your address from the list.";
   const chk = (name, on, label) => `<label class="check"><input type="checkbox" name="${name}" ${on ? "checked" : ""}> <span>${label}</span></label>`;
   const roleChoice = `<input type="hidden" name="role" value="${esc(p.role || "rider")}">`;
@@ -162,6 +162,14 @@ export function profileForm(S, p0 = {}, { leaderEditing = false, registering = f
       <div class="suggest" id="addr-suggest" role="listbox" hidden></div>
       <p class="small muted addr-status" id="addr-status" aria-live="polite">${addrStatus}</p>
       <input type="hidden" name="pickedAddress" value=""><input type="hidden" name="pickedLat" value=""><input type="hidden" name="pickedLng" value="">
+      <input type="hidden" name="pinLat" value=""><input type="hidden" name="pinLng" value="">
+      <p class="pinbar small">${leaderEditing ? "" : `<button type="button" class="btn link" data-pin="gps">📍 I'm at home: use my current location</button><br>`}
+        <button type="button" class="btn link" data-pin="map">Can't find the address? Place a pin on the map</button></p>
+      <div class="pinbox" hidden>
+        <p class="small pin-help" aria-live="polite">Loading the map…</p>
+        <div class="pinmap" role="application" aria-label="Map: drag the pin onto the house"></div>
+        <div class="row wrap"><button type="button" class="btn primary" data-pin="done">This is ${leaderEditing ? "the" : "my"} house</button><button type="button" class="btn ghost" data-pin="cancel">Cancel</button></div>
+      </div>
     </div>
     <label class="field"><span>Postal code ${req} <span class="small muted">(filled in when you pick your address)</span></span><input name="postalCode" required value="${esc(p.postalCode || "")}" autocomplete="postal-code" placeholder="S7N 0A1" maxlength="7" style="text-transform:uppercase"></label>
     <input type="hidden" name="neighbourhood" value="${esc(p.neighbourhood || "")}">
@@ -529,7 +537,7 @@ function peopleTab(S) {
       ${S.editing !== "new" && p.role !== "leader" ? `<hr><h3>Remove ${esc(firstName(p.name))}</h3><p class="small muted">Deletes this person with their requests, availability and rides (for example a test name). Any plan they are in goes back to a draft so you can redo it. This cannot be undone.</p>${btn("Remove " + firstName(p.name), "remove-person", { id: p.id })}` : ""}</section>`;
   }
   const pushOn = new Set(S.data.pushPeople || []);
-  const pushMark = (p) => (pushOn.has(p.id) ? " · 🔔 notifications on" : "");
+  const pushMark = (p) => (pushOn.has(p.id) ? " · 🔔 notifications on" : "") + (p.geoSource === "pin" ? " · 📍 pin placed by them" : "");
   const drivers = S.data.profiles.filter((p) => isDriver(p) || (p.role === "driver"));
   const riders = S.data.profiles.filter((p) => p.role === "rider");
   const dRow = (d) => {

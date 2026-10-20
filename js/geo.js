@@ -100,7 +100,10 @@ export const AREA = { west: -106.85, south: 52.0, east: -106.45, north: 52.25 };
 const inArea = (lat, lng) => lat >= AREA.south && lat <= AREA.north && lng >= AREA.west && lng <= AREA.east;
 
 /** geo_source values that may be used for matching and timing. */
-export const CONFIRMED_SOURCES = new Set(["verified", "manual"]);
+// "pin": the person placed a pin on their house themselves (with their phone's location or by hand),
+// for homes the map service doesn't list by house number yet.
+export const CONFIRMED_SOURCES = new Set(["verified", "manual", "pin"]);
+export const inSaskatoon = (lat, lng) => lat != null && lng != null && inArea(Number(lat), Number(lng));
 export const isConfirmed = (p) => !!p && p.lat != null && p.lng != null && CONFIRMED_SOURCES.has(p.geoSource);
 
 /** "3065550142", "(306) 555-0142", "+1 306 555 0142" -> "306-555-0142". Anything else -> null. */
@@ -223,6 +226,58 @@ export async function confirmAddress(address, { nominatimUrl = "https://nominati
     };
   } catch (_) {
     return { ok: false, reason: "The address check isn't available right now. Please try again in a minute." };
+  }
+}
+
+/**
+ * What's at a point (for a pin or the phone's location): the nearest address the map knows,
+ * its postal code and neighbourhood. Never throws; fields are null when unknown.
+ */
+export async function reverseLookup(lat, lng, { nominatimUrl = "https://nominatim.openstreetmap.org", fetchFn } = {}) {
+  const doFetch = fetchFn || (typeof fetch === "function" ? fetch : null);
+  const out = { address: null, street: null, postcode: null, neighbourhood: inArea(lat, lng) ? nearestNeighbourhood(lat, lng) : null };
+  if (!doFetch) return out;
+  try {
+    const url = new URL("/reverse", nominatimUrl);
+    url.searchParams.set("lat", String(lat));
+    url.searchParams.set("lon", String(lng));
+    url.searchParams.set("format", "jsonv2");
+    url.searchParams.set("addressdetails", "1");
+    url.searchParams.set("zoom", "18");
+    const res = await doFetch(url.toString(), { headers: { Accept: "application/json" } });
+    if (!res.ok) return out;
+    const a = (await res.json()).address || {};
+    out.street = a.road || null;
+    out.address = a.road ? (a.house_number ? fullLabel(a.house_number, a.road) : a.road) : null;
+    out.postcode = normalizePostal(a.postcode);
+    out.neighbourhood = a.neighbourhood || a.suburb || a.quarter || a.city_district || out.neighbourhood;
+    return out;
+  } catch (_) {
+    return out;
+  }
+}
+
+/** Roughly where a typed street is, to start the map there. { lat, lng } or null. Never throws. */
+export async function locateStreet(text, { photonUrl = "https://photon.komoot.io", fetchFn } = {}) {
+  const doFetch = fetchFn || (typeof fetch === "function" ? fetch : null);
+  const q = String(text || "").trim();
+  if (!doFetch || q.length < 3) return null;
+  try {
+    const url = new URL("/api/", photonUrl);
+    url.searchParams.set("q", /saskatoon/i.test(q) ? q : `${q}, Saskatoon`);
+    url.searchParams.set("limit", "5");
+    url.searchParams.set("lat", "52.13");
+    url.searchParams.set("lon", "-106.66");
+    url.searchParams.set("bbox", `${AREA.west},${AREA.south},${AREA.east},${AREA.north}`);
+    const res = await doFetch(url.toString(), { headers: { Accept: "application/json" } });
+    if (!res.ok) return null;
+    for (const f of (await res.json()).features || []) {
+      const [lng, lat] = f.geometry?.coordinates || [];
+      if (lat != null && inArea(lat, lng)) return { lat, lng };
+    }
+    return null;
+  } catch (_) {
+    return null;
   }
 }
 
