@@ -529,27 +529,15 @@ export function roleView(S) {
 
 function lastMinuteCard(S) {
   const sunday = S.sunday;
-  const pv = S.planView;
-  const waiting = new Set((pv?.waitlist || S.data.plans[sunday]?.waitlist || []).map((w) => w.riderId));
-  const asking = new Set(S.data.requests.filter((r) => r.sunday === sunday && r.status !== "cancelled").map((r) => r.riderId));
-  const riders = S.data.profiles.filter((p) => p.role === "rider").sort((a, b) => a.name.localeCompare(b.name));
-  const opt = (p) => `<option value="${esc(p.id)}" ${S.help?.riderId === p.id ? "selected" : ""} ${isConfirmed(p) ? "" : "disabled"}>${esc(p.name)}${p.neighbourhood ? ` · ${esc(p.neighbourhood)}` : ""}${isConfirmed(p) ? "" : " (address not confirmed)"}</option>`;
-  const group = (label, list) => (list.length ? `<optgroup label="${esc(label)}">${list.map(opt).join("")}</optgroup>` : "");
   const form = `<form data-form="help" class="stack">
-      <label class="field"><span>Rider's name</span><input name="helpName" value="${esc(S.help?.newRider?.name || "")}" placeholder="e.g. Jo"></label>
+      <label class="field"><span>Rider's name</span><input name="helpName" required value="${esc(S.help?.newRider?.name || "")}" placeholder="e.g. Jo"></label>
       <div class="field addr">
         <label for="help-addr">Where to pick them up</label>
-        <input id="help-addr" name="address" value="${esc(S.help?.newRider?.address || "")}" autocomplete="off" placeholder="Start typing, e.g. 639 Addie Crescent" aria-autocomplete="list" aria-controls="help-suggest">
+        <input id="help-addr" name="address" required value="${esc(S.help?.newRider?.address || "")}" autocomplete="off" placeholder="Start typing, e.g. 639 Addie Crescent" aria-autocomplete="list" aria-controls="help-suggest">
         <div class="suggest" id="help-suggest" role="listbox" hidden></div>
         <p class="small muted addr-status" aria-live="polite">Pick the address from the list. It's checked to the house number, like everyone else's.</p>
         <input type="hidden" name="pickedAddress" value=""><input type="hidden" name="pickedLat" value=""><input type="hidden" name="pickedLng" value="">
       </div>
-      <label class="field"><span>Or choose someone already registered</span><select name="helpRider">
-        <option value="">Choose a rider…</option>
-        ${group("Waiting for a seat this Sunday", riders.filter((p) => waiting.has(p.id)))}
-        ${group("Asking this Sunday", riders.filter((p) => asking.has(p.id) && !waiting.has(p.id)))}
-        ${group("Other registered riders", riders.filter((p) => !asking.has(p.id)))}
-      </select></label>
       <label class="field"><span>Seats needed (the rider plus anyone with them)</span><input name="helpSeats" type="number" min="1" max="10" value="${esc(S.help?.seats || 1)}"></label>
       <button class="btn primary" type="submit">Find the closest drivers</button>
     </form>`;
@@ -574,7 +562,7 @@ function lastMinuteCard(S) {
       <p class="small muted">Suggested pickup around <strong>${esc(fmtMin(r.pickupMin))}</strong> to reach church on time. Only cleared drivers with a confirmed address are listed, closest first, with those already driving this Sunday at the top. Each message gives the neighbourhood only; send the address once they say yes.</p>
       ${r.travelNote ? banner("warn", esc(r.travelNote)) : ""}
       ${rows ? `<ol class="plain helpers">${rows}</ol>` : `<p class="muted">No cleared drivers with a confirmed address yet.</p>`}
-      ${h.riderId ? "" : `<p class="small">${esc(firstName(h.name))} isn't registered. Once a driver says yes, add them under <strong>People</strong> so they appear in the plan.</p>`}
+      <p class="small">Once a driver says yes, send them the address. If ${esc(firstName(h.name))} isn't registered yet, add them under <strong>People</strong> (Add a rider who phoned in) so the ride appears in the plan.</p>
       ${copyBlock("Or ask the whole group", T.lastMinuteBroadcast(sunday, firstName(h.name), h.neighbourhood, h.seats), "For the drivers' group chat. No address or phone number.")}`;
   }
   return `<article class="card"><strong>Last-minute: find a driver</strong>

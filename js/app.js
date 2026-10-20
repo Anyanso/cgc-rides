@@ -378,13 +378,9 @@ async function findHelpers(form) {
   needChurch();
   const f = new FormData(form);
   const seats = Math.max(1, Math.min(10, Number(f.get("helpSeats")) || 1));
-  const riderId = (f.get("helpRider") || "").toString();
   const typed = (f.get("address") || "").toString().trim();
   let rider;
-  if (riderId && !typed) {
-    rider = S.data.profiles.find((p) => p.id === riderId);
-    S.help = { sunday: S.sunday, riderId, name: rider.name, neighbourhood: rider.neighbourhood, seats };
-  } else if (typed) {
+  if (typed) {
     const name = (f.get("helpName") || "").toString().trim() || "The rider";
     const picked = f.get("pickedAddress") ? { address: f.get("pickedAddress").toString(), lat: Number(f.get("pickedLat")), lng: Number(f.get("pickedLng")) } : null;
     const g = await confirmAddress(typed, { nominatimUrl: CONFIG.geocoding.nominatimUrl });
@@ -394,7 +390,7 @@ async function findHelpers(form) {
     rider = { lat: ok.lat, lng: ok.lng, geoSource: "verified" };
     S.help.neighbourhood = ok.neighbourhood || null;
   } else {
-    throw new Error("Type the rider's name and address (pick it from the list), or choose someone already registered.");
+    throw new Error("Type the rider's name and where to pick them up (pick the address from the list).");
   }
   const assignments = S.planView?.assignments || S.data.plans[S.sunday]?.assignments || [];
   S.help.result = await rankHelpers({ data: S.data, sunday: S.sunday, church: S.church, config: CONFIG, rider, seats, assignments });
