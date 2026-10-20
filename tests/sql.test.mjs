@@ -501,3 +501,27 @@ test("a home can be saved with a pin the person placed; unknown sources are refu
   } finally { await db.exec("reset role"); }
   assert.equal((await q("select geo_source from profiles where user_id=$1", [u]))[0].geo_source, "pin");
 });
+
+test("a rider who cancels from a shared plan: their driver gets a notification (not for a draft)", async () => {
+  const ids = {};
+  for (const [k, uid, name, role] of [["dr", "00000000-0000-0000-0000-0000000001c1", "Dora Driver", "driver"], ["rr", "00000000-0000-0000-0000-0000000001c2", "Remi Rider", "rider"]]) {
+    await db.query("insert into auth.users (id,email) values ($1,$2)", [uid, `${k}@example.com`]);
+    await db.query("insert into profiles (user_id,full_name,role,seats,driver_status) values ($1,$2,$3,3,$4)", [uid, name, role, role === "driver" ? "cleared" : "none"]);
+    ids[k] = (await q("select id from profiles where user_id=$1", [uid]))[0].id;
+    U[k] = uid;
+  }
+  await as("dr", () => db.query("select save_push_sub('https://push.example.com/dora','k','a')"));
+  const run = async (status, day) => {
+    await db.exec("delete from push_queue");
+    await db.query("insert into ride_requests (rider_id, sunday) values ($1,$2)", [ids.rr, day]);
+    const [pl] = await q("insert into plans (sunday, status) values ($1,$2) returning id", [day, status]);
+    await db.query("insert into assignments (plan_id, rider_id, driver_id, trip, pickup_min) values ($1,$2,$3,1,650)", [pl.id, ids.rr, ids.dr]);
+    await as("rr", () => db.query("update ride_requests set status='cancelled' where rider_id=$1 and sunday=$2", [ids.rr, day]));
+    return q("select profile_id, title, body from push_queue where profile_id=$1", [ids.dr]);
+  };
+  const shared = await run("approved", sundayInDays(42));
+  assert.equal(shared.length, 1);
+  assert.equal(shared[0].title, "Change to your pickups");
+  assert.match(shared[0].body, /^Remi cancelled their ride for Sunday, so you don't need to pick them up\./);
+  assert.equal((await run("draft", sundayInDays(49))).length, 0);
+});

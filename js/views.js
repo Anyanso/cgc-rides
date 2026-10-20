@@ -607,7 +607,7 @@ function alertsTab(S) {
       const pickup = seat?.pickupMin != null ? ` (pickup ${esc(fmtMin(seat.pickupMin))})` : ((a.message.match(/\(pickup ([^)]+)\)/) || [])[1] ? ` (pickup ${esc(a.message.match(/\(pickup ([^)]+)\)/)[1])})` : "");
       body = `<p><strong>${esc(r?.name || "A rider")} cancelled their ride for ${esc(day)}.</strong></p>` + (d
         ? `<p>They were in <strong>${esc(d.name)}</strong>'s car${pickup}, so ${esc(firstName(d.name))} now has a free seat${left ? "" : " and no one else to pick up"}. They've been taken out of the plan; if they ask again, they'll need your approval.</p>
-           <p class="small"><strong>Already done:</strong> the plan has been updated without ${esc(firstName(r?.name || "them"))}.<br>
+           <p class="small"><strong>Already done:</strong> the plan has been updated without ${esc(firstName(r?.name || "them"))}${plan?.status === "approved" && (S.data.pushPeople || []).includes(did) ? `, and ${esc(firstName(d.name))} got a notification on their phone` : ""}.<br>
            <strong>What to do:</strong> 1) Send ${esc(firstName(d.name))} the message below. ${left ? `2) In the Plan tab, tap <strong>Approve & share</strong> so ${esc(firstName(d.name))}'s pickup list and leave time are right, then send the new list from Texts. ` : ""}Then tap <strong>Mark done</strong>.</p>`
         : `<p class="small">They're no longer in the plan, so nothing else needs to change.</p>`);
       if (!a.resolved && d) {

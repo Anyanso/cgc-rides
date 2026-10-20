@@ -350,7 +350,7 @@ language plpgsql security definer set search_path = public, pg_temp as $$
 declare nm text; dn text; seat record;
 begin
   if new.status = 'cancelled' and old.status <> 'cancelled' then
-    select x.driver_id, x.pickup_min into seat from assignments x join plans p on p.id = x.plan_id
+    select x.driver_id, x.pickup_min, p.status as plan_status into seat from assignments x join plans p on p.id = x.plan_id
      where p.sunday = new.sunday and x.rider_id = new.rider_id order by x.trip limit 1;
     delete from assignments x using plans p where p.id = x.plan_id and p.sunday = new.sunday and x.rider_id = new.rider_id;
     delete from waitlist w using plans p where p.id = w.plan_id and p.sunday = new.sunday and w.rider_id = new.rider_id;
@@ -361,6 +361,14 @@ begin
       values ('rider_cancel', new.sunday, new.rider_id, seat.driver_id,
         nm || ' cancelled their ride for ' || to_char(new.sunday, 'FMDay, FMMonth FMDD') || '. They were in ' || dn || '''s car'
         || coalesce(' (pickup ' || to_char(time '00:00' + make_interval(mins => seat.pickup_min), 'FMHH12:MI AM') || ')', '') || '.');
+      -- The driver already had this rider on their list (the plan was shared): tell them straight away.
+      if seat.plan_status = 'approved' and to_regclass('public.push_queue') is not null
+         and exists (select 1 from push_subs s where s.profile_id = seat.driver_id) then
+        insert into push_queue (profile_id, title, body, tag)
+        values (seat.driver_id, 'Change to your pickups',
+          split_part(nm, ' ', 1) || ' cancelled their ride for ' || to_char(new.sunday, 'FMDay') || ', so you don''t need to pick them up. Open the app for your updated list.',
+          'route-' || new.sunday);
+      end if;
     end if;
   elsif new.status <> 'cancelled' and old.status = 'cancelled' then
     update alerts set resolved = true
