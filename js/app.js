@@ -38,6 +38,10 @@ function render() {
   } else {
     inner = roleView(S);
   }
+  if (S.session && S.me && S.screen !== "loading") {
+    const t = S.lastSync ? S.lastSync.toLocaleTimeString("en-CA", { hour: "numeric", minute: "2-digit" }) : "";
+    inner = `<p class="sync small muted" aria-live="polite">${t ? `Up to date · ${t}` : "Up to date"} · checks every 30 seconds <button class="btn link" type="button" data-act="refresh-now">Refresh now</button></p>` + inner;
+  }
   const y = window.scrollY;
   root.innerHTML = shell(S, inner);
   window.scrollTo(0, y);
@@ -98,7 +102,7 @@ function planViewFromSaved() {
 async function autoUpdatePlan() {
   if (!S.data || !S.sunday || !S.church) return;
   const pv = S.planView;
-  if (pv?.dirty) return;
+  if (pv?.edited) return; // the leader is changing it by hand: leave it alone
   const asking = S.data.requests.filter((r) => r.sunday === S.sunday && r.status !== "cancelled");
   const askingIds = new Set(asking.map((r) => r.riderId));
   const name = (id) => S.data.profiles.find((p) => p.id === id)?.name || "a rider";
@@ -123,7 +127,7 @@ async function autoUpdatePlan() {
   }
   try {
     const res = await draftPlan({ data: S.data, sunday: S.sunday, church: S.church, config: CONFIG, keep });
-    adoptResult(res, pv?.status || "draft");
+    adoptResult(res, pv?.status || "draft", { auto: true });
     S.planView.autoNote = note;
   } catch (err) { console.error(err); }
 }
@@ -150,12 +154,12 @@ async function load() {
     for (const s of S.sundays) S.routes[s] = await store.myRoute(s);
     S.data = await store.leaderData();
     S.sunday = S.sunday && S.sundays.includes(S.sunday) ? S.sunday : S.sundays[0];
-    if (!S.planView || !S.planView.dirty) planViewFromSaved();
+    if (!S.planView || !S.planView.edited) planViewFromSaved();
     await autoUpdatePlan();
   }
 }
 
-async function reload() { await load(); }
+async function reload() { await load(); S.lastSync = new Date(); }
 
 // ---------------------------------------------------------------- reading forms
 
@@ -230,8 +234,8 @@ async function persistPlan(status) {
   await reload();
 }
 
-function adoptResult(res, status) {
-  S.planView = { status, assignments: res.assignments, waitlist: res.waitlist, trips: res.trips, warnings: res.warnings, excluded: res.excludedDrivers || excludedFor(S.sunday), dirty: true, travelNote: res.travelNote, travelSource: res.travelSource };
+function adoptResult(res, status, { auto = false } = {}) {
+  S.planView = { edited: !auto, status, assignments: res.assignments, waitlist: res.waitlist, trips: res.trips, warnings: res.warnings, excluded: res.excludedDrivers || excludedFor(S.sunday), dirty: true, travelNote: res.travelNote, travelSource: res.travelSource };
 }
 
 function needChurch() { if (!S.church) throw new Error(S.churchWarning || "The church location isn't set."); }
@@ -282,7 +286,7 @@ const actions = {
     if (!S.planView) {
       needChurch();
       const res = await draftPlan({ data: S.data, sunday: S.sunday, church: S.church, config: CONFIG });
-      adoptResult(res, "draft");
+      adoptResult(res, "draft", { auto: true });
       say(`Plan ready: ${res.assignments.length} seated, ${res.waitlist.length} waiting.`);
     }
     S.planOpen = true;
@@ -338,6 +342,7 @@ const actions = {
     say("Re-placed that group across cars. Everyone else stayed where they were. Review, then save.");
   },
   async resolve(d) { await store.resolveAlert(d.id); await reload(); },
+  async "refresh-now"() { await refreshNow({ manual: true }); },
   async "help-answer"(d) {
     const r = await store.answerHelp(d.id, d.answer);
     await reload();
@@ -574,6 +579,79 @@ root.addEventListener("submit", (e) => {
 
 // ---------------------------------------------------------------- start
 
+// ---------------------------------------------------------------- staying up to date
+// While the app is open it checks for changes every 30 seconds, and straight away when the person
+// comes back to it. It never redraws while they're typing or have changed a form, and it says
+// what changed ("Jo cancelled their ride…").
+
+const REFRESH_MS = 30000;
+let refreshing = false;
+
+function formInUse() {
+  const a = document.activeElement;
+  if (a && root.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return true;
+  for (const el of root.querySelectorAll("input, textarea, select")) {
+    if (el.type === "hidden" || el.closest(".move")) continue;
+    if (el.type === "checkbox" || el.type === "radio") { if (el.checked !== el.defaultChecked) return true; }
+    else if (el.tagName === "SELECT") { if ([...el.options].some((o) => o.selected !== o.defaultSelected)) return true; }
+    else if (el.value !== el.defaultValue) return true;
+  }
+  return false;
+}
+
+function snapshot() {
+  const d = S.data;
+  return {
+    alerts: new Map((d?.alerts || []).filter((a) => !a.resolved).map((a) => [a.id, a])),
+    requests: new Map((d?.requests || []).map((r) => [`${r.riderId}|${r.sunday}`, r.status])),
+    help: JSON.stringify((d?.helpRequests || []).map((h) => [h.id, h.status, h.asks.map((a) => a.answer)])),
+    asks: JSON.stringify((S.helpAsks || []).map((h) => [h.id, h.status, h.mine])),
+    routes: JSON.stringify(S.routes || {}),
+    rides: JSON.stringify(S.rides || []),
+  };
+}
+
+function whatChanged(a, b) {
+  const name = (id) => S.data?.profiles.find((p) => p.id === id)?.name || "Someone";
+  const out = [];
+  for (const [id, al] of b.alerts) if (!a.alerts.has(id)) out.push(al.message.replace(/\s*\(pickup[^)]*\)/, "").replace(/ They were in .*$/, ""));
+  for (const [k, st] of b.requests) {
+    const old = a.requests.get(k);
+    const [rid] = k.split("|");
+    if (!old && st !== "cancelled") out.push(`${name(rid)} asked for a ride.`);
+    else if (old && old !== st && st === "requested") out.push(`${name(rid)} asked for a ride again.`);
+    else if (old && old !== st && st === "cancelled" && !out.some((m) => m.startsWith(name(rid)))) out.push(`${name(rid)} cancelled.`);
+  }
+  if (a.help !== b.help && !out.length && S.me?.role === "leader") out.push("A driver answered a last-minute request.");
+  if (a.asks !== b.asks) out.push("You have a last-minute ride request (or an update to one).");
+  if (a.routes !== b.routes && S.me?.role !== "leader") out.push("Your pickups were updated.");
+  if (a.rides !== b.rides) out.push("Your ride details were updated.");
+  return out.length ? `Updated: ${out.slice(0, 3).join(" ")}${out.length > 3 ? ` (+${out.length - 3} more)` : ""}` : "";
+}
+
+async function refreshNow({ manual = false } = {}) {
+  if (!S.session || !S.me || refreshing || S.busy) return;
+  if (!manual && (document.hidden || formInUse() || S.editing)) return;
+  refreshing = true;
+  const before = snapshot();
+  try {
+    await load();
+    S.lastSync = new Date();
+    const msg = whatChanged(before, snapshot());
+    if (msg) S.toast = msg; else if (manual) S.toast = "You're up to date.";
+  } catch (err) {
+    console.error(err);
+    if (manual) S.error = "Couldn't check for updates. Check your internet connection and try again.";
+  } finally {
+    refreshing = false;
+    render();
+  }
+}
+
+setInterval(() => refreshNow(), REFRESH_MS);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshNow(); });
+window.addEventListener("focus", () => refreshNow());
+
 (async function boot() {
   render();
   try {
@@ -586,7 +664,7 @@ root.addEventListener("submit", (e) => {
     }
     await store.init(() => guarded(async () => { S.session = store.session(); if (S.session) await reload(); }));
     S.session = store.session();
-    if (S.session) await reload();
+    if (S.session) { await reload(); S.lastSync = new Date(); }
   } catch (err) {
     console.error(err);
     S.error = `Couldn't start the app: ${err.message}`;

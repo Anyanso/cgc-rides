@@ -96,3 +96,4 @@ summary{cursor:pointer;font-weight:600}
 .asks{display:grid;gap:.35rem;margin:.5rem 0}.asks li{border-top:1px solid var(--line);padding-top:.35rem}
 .card.ok-card{background:var(--oksoft);border-color:var(--ok)}
 .helper .check{align-items:flex-start}
+.sync{margin:.2rem 0 .4rem;display:flex;flex-wrap:wrap;align-items:center;gap:.2rem .4rem}.sync .btn.link{padding:.1rem .3rem;font-size:inherit}
