@@ -125,7 +125,7 @@ export async function createLiveStore(config, { createClient } = {}) {
     },
     async leaderData() {
       const since = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-      const [pr, rq, wk, pl, as, wl, al, cl] = await Promise.all([
+      const [pr, rq, wk, pl, as, wl, al, cl, hr, ha] = await Promise.all([
         from("profiles").select("*").order("full_name"),
         from("ride_requests").select("*").gte("sunday", since),
         from("driver_weeks").select("*").gte("sunday", since),
@@ -134,8 +134,17 @@ export async function createLiveStore(config, { createClient } = {}) {
         from("waitlist").select("*"),
         from("alerts").select("*").order("created_at", { ascending: false }).limit(50),
         from("consent_log").select("*").order("at", { ascending: false }).limit(200),
+        from("help_requests").select("*").gte("sunday", since).neq("status", "cancelled").order("created_at", { ascending: false }),
+        from("help_asks").select("*"),
       ]);
       for (const r of [pr, rq, wk, pl, as, wl, al, cl]) fail(r);
+      // Last-minute requests need the 20 Oct (afternoon) database update; until then, there are none.
+      const helpRequests = hr.error || ha.error ? [] : hr.data.map((h) => ({
+        id: h.id, sunday: h.sunday, riderName: h.rider_name, riderPhone: h.rider_phone, address: h.address, neighbourhood: h.neighbourhood,
+        postalCode: h.postal_code, lat: h.lat, lng: h.lng, seats: h.seats, pickupMin: h.pickup_min, status: h.status,
+        acceptedBy: h.accepted_by, acceptedAt: h.accepted_at, createdAt: h.created_at,
+        asks: ha.data.filter((k) => k.request_id === h.id).map((k) => ({ driverId: k.driver_id, awayMin: k.away_min, answer: k.answer })),
+      }));
       const plans = {};
       for (const p of pl.data) {
         plans[p.sunday] = {
@@ -151,6 +160,7 @@ export async function createLiveStore(config, { createClient } = {}) {
         plans,
         alerts: al.data.map((a) => ({ id: a.id, kind: a.kind, sunday: a.sunday, driverId: a.driver_id, riderId: a.rider_id, message: a.message, resolved: a.resolved, createdAt: a.created_at })),
         consentLog: cl.data.map((c) => ({ profileId: c.profile_id, kind: c.kind, wording: c.wording, at: c.at })),
+        helpRequests,
       };
     },
     async savePlan(sunday, status, summary, assignments, waitlist) {
@@ -180,6 +190,26 @@ export async function createLiveStore(config, { createClient } = {}) {
       fail(await from("ride_requests").update({ status: "cancelled" }).eq("rider_id", riderId).eq("sunday", sunday));
     },
     async resolveAlert(id) { fail(await from("alerts").update({ resolved: true }).eq("id", id)); },
+
+    // ---- last-minute requests
+    async createHelpRequest(req, asks) {
+      const res = await from("help_requests").insert({
+        sunday: req.sunday, rider_name: req.riderName, rider_phone: req.riderPhone || null, address: req.address,
+        neighbourhood: req.neighbourhood || null, postal_code: req.postalCode || null, lat: req.lat, lng: req.lng,
+        seats: req.seats, pickup_min: req.pickupMin,
+      }).select("id").single();
+      fail(res);
+      fail(await from("help_asks").insert(asks.map((a) => ({ request_id: res.data.id, driver_id: a.driverId, away_min: a.awayMin }))));
+      return res.data.id;
+    },
+    async cancelHelpRequest(id) { fail(await from("help_requests").update({ status: "cancelled" }).eq("id", id)); },
+    async myHelpRequests() {
+      const res = await sb.rpc("my_help_requests");
+      if (res.error) return []; // before the database update
+      return res.data.map((h) => ({ id: h.id, sunday: h.sunday, riderName: h.rider_name, neighbourhood: h.neighbourhood, seats: h.seats,
+        pickupMin: h.pickup_min, awayMin: h.away_min, status: h.status, myAnswer: h.my_answer, mine: h.mine, address: h.address, riderPhone: h.rider_phone }));
+    },
+    async answerHelp(id, answer) { return rpc("answer_help", { p_request: id, p_answer: answer }); },
 
     async locate(address, neighbourhood, geocoding) {
       return geocode(address, { neighbourhood, nominatimUrl: geocoding?.nominatimUrl, enabled: geocoding?.enabled !== false });

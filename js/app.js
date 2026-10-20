@@ -21,7 +21,7 @@ const S = {
   screen: "landing", session: null, me: null, tab: null,
   sundays: [], sunday: null, rides: [], weeks: [], routes: {},
   data: null, planView: null, planOpen: false, church: null, churchWarning: null, churchFound: null, formDraft: null,
-  editing: null, busy: false, toast: "", error: "", signInSent: "", regRole: null, broadcast: "", help: null,
+  editing: null, busy: false, toast: "", error: "", signInSent: "", regRole: null, broadcast: "", help: null, helpAsks: [],
   now: new Date(), todayISO: "", demoPeople: null, appUrl: "", demoChurchLabel: DEMO_CHURCH.label,
 };
 
@@ -138,6 +138,7 @@ async function load() {
   if (!S.tab || (S.me.role === "leader" && !["plan", "people", "alerts", "texts", "driving"].includes(S.tab)) ||
       (S.me.role === "driver" && !["sundays", "details"].includes(S.tab)) || (S.me.role === "rider" && !["rides", "details"].includes(S.tab))) S.tab = defaults[S.me.role];
   if (S.me.role === "rider") S.rides = await store.myRides();
+  if (S.me.role === "driver" || S.me.role === "leader") S.helpAsks = await store.myHelpRequests();
   if (S.me.role === "driver") {
     S.weeks = await store.myWeeks();
     S.routes = {};
@@ -337,6 +338,16 @@ const actions = {
     say("Re-placed that group across cars. Everyone else stayed where they were. Review, then save.");
   },
   async resolve(d) { await store.resolveAlert(d.id); await reload(); },
+  async "help-answer"(d) {
+    const r = await store.answerHelp(d.id, d.answer);
+    await reload();
+    say({ accepted: "Thank you! The ride is yours. The address and time are below.", taken: "Thank you! Another driver said yes first, so this ride is covered.",
+      cancelled: "This request was cancelled by the transport leader.", noted: "Thanks for letting us know." }[r] || "Answer saved.");
+  },
+  async "help-cancel"(d) {
+    if (!confirm("Cancel this last-minute request? Drivers will no longer see it.")) return;
+    await store.cancelHelpRequest(d.id); await reload(); say("Request cancelled.");
+  },
   /** From a "rider cancelled" alert: open that Sunday's plan, already updated without them, ready to approve. */
   async "alert-plan"(d) {
     S.sunday = d.sunday; S.planView = null; planViewFromSaved(); await autoUpdatePlan();
@@ -385,15 +396,31 @@ async function findHelpers(form) {
     const picked = f.get("pickedAddress") ? { address: f.get("pickedAddress").toString(), lat: Number(f.get("pickedLat")), lng: Number(f.get("pickedLng")) } : null;
     const g = await confirmAddress(typed, { nominatimUrl: CONFIG.geocoding.nominatimUrl });
     const ok = g.ok ? g : (picked && picked.address === typed ? { ...picked, neighbourhood: null } : null);
-    S.help = { sunday: S.sunday, riderId: null, name, seats, newRider: { name, address: typed } };
+    const phone = (f.get("helpPhone") || "").toString().trim();
+    if (phone && !normalizePhone(phone)) throw new Error("That phone number doesn't look right. Use 10 digits, e.g. 306-555-0142, or leave it empty.");
+    S.help = { sunday: S.sunday, riderId: null, name, seats, phone: phone ? normalizePhone(phone) : null, newRider: { name, address: typed, phone } };
     if (!ok) throw new Error(g.reason);
     rider = { lat: ok.lat, lng: ok.lng, geoSource: "verified" };
     S.help.neighbourhood = ok.neighbourhood || null;
+    S.help.place = { address: ok.address || typed, lat: ok.lat, lng: ok.lng, neighbourhood: ok.neighbourhood || null, postalCode: ok.postcode || null };
   } else {
     throw new Error("Type the rider's name and where to pick them up (pick the address from the list).");
   }
   const assignments = S.planView?.assignments || S.data.plans[S.sunday]?.assignments || [];
   S.help.result = await rankHelpers({ data: S.data, sunday: S.sunday, church: S.church, config: CONFIG, rider, seats, assignments });
+}
+
+/** Sends the last-minute request to the ticked drivers' dashboards. The first to say yes gets the ride. */
+async function askInApp(form) {
+  const h = S.help;
+  if (!h?.result || !h.place) throw new Error("Find the closest drivers first.");
+  const ids = new FormData(form).getAll("askDriver").map(String);
+  if (!ids.length) throw new Error("Tick at least one driver to ask.");
+  const asks = h.result.list.filter((x) => ids.includes(x.driver.id)).map((x) => ({ driverId: x.driver.id, awayMin: x.awayMin }));
+  await store.createHelpRequest({ sunday: h.sunday, riderName: h.name, riderPhone: h.phone, ...h.place, seats: h.seats, pickupMin: h.result.pickupMin }, asks);
+  S.help = null;
+  await reload();
+  say(`Asked ${asks.length} driver${asks.length > 1 ? "s" : ""} in the app. Copy each one the short text below so they know to look. The first to say yes gets the ride.`);
 }
 
 async function onMove(el) {
@@ -410,6 +437,7 @@ async function onSubmit(form) {
   if (kind === "code") { await store.verifyCode(S.signInSent, new FormData(form).get("code").toString().trim()); S.signInSent = ""; S.session = store.session(); await reload(); return; }
   if (kind === "request") { const f = new FormData(form); await store.requestRide(form.dataset.sunday, { rideHome: f.get("rideHome") === "on", note: (f.get("note") || "").toString().trim() || null, extraPeople: Math.max(0, Math.min(10, Number(f.get("extraPeople")) || 0)), canSplit: f.get("canSplit") === "on" }); await reload(); say("Request sent. We'll confirm your driver after requests close."); return; }
   if (kind === "help") { await findHelpers(form); return; }
+  if (kind === "help-ask") { await askInApp(form); return; }
   if (kind === "profile") {
     const leaderEditing = S.me?.role === "leader" && S.editing;
     const raw = readProfile(form);

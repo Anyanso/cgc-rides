@@ -93,3 +93,6 @@ summary{cursor:pointer;font-weight:600}
 .btn[disabled]{opacity:.55;cursor:not-allowed}
 .helpers{display:grid;gap:.6rem;margin:.6rem 0}.helper{border:1px solid var(--line);border-radius:12px;padding:.7rem .8rem;background:var(--paper)}
 .newrider summary{font-weight:500;font-size:.92rem}
+.asks{display:grid;gap:.35rem;margin:.5rem 0}.asks li{border-top:1px solid var(--line);padding-top:.35rem}
+.card.ok-card{background:var(--oksoft);border-color:var(--ok)}
+.helper .check{align-items:flex-start}

@@ -161,3 +161,11 @@ test("last-minute help ranks cleared, confirmed drivers; drivers not yet cleared
   assert.equal(typeof r.pickupMin, "number");
   await assert.rejects(rankHelpers({ data, sunday, church, config: CONFIG, rider: { ...jo, geoSource: "neighbourhood" } }), /isn't confirmed/);
 });
+
+test("a driver whose rider cancelled and rebooked gets an apology in their pickup list", async () => {
+  const { driverRoute } = await import("../js/texts.js");
+  const cars = [{ trip: 1, stops: [{ riderId: "jo", pickupMin: 665, seats: 1, departMin: 650, arriveMin: 690 }] }];
+  const riders = new Map([["jo", { name: "Jo", address: "639 Addie Crescent", neighbourhood: "Forest Grove", phone: "306-370-9965" }]]);
+  const msg = driverRoute("2026-10-25", { name: "Dami" }, cars, riders, new Map(), { rebooked: ["Jo"] });
+  assert.match(msg.split("\n")[1], /^Sorry for the back-and-forth: Jo is coming after all, so they're back on your list\.$/);
+});

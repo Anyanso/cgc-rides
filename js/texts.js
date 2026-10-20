@@ -46,9 +46,13 @@ export function waitlisted(sunday, rider) {
   return `Hi ${first(rider.name)}, we're still working on a seat for you on ${fmtDate(sunday)}. The transport leader will message you as soon as we have one. Thank you for your patience.`;
 }
 
-export function driverRoute(sunday, driver, cars, ridersById, groupSizes = new Map()) {
+export function driverRoute(sunday, driver, cars, ridersById, groupSizes = new Map(), { rebooked = [] } = {}) {
   const details = CONFIG.texts?.includeDetails !== false;
   const lines = [`Hi ${first(driver.name)}, thank you for driving on ${fmtDate(sunday)}.`];
+  if (rebooked.length) {
+    const who = rebooked.length === 1 ? rebooked[0] : `${rebooked.slice(0, -1).join(", ")} and ${rebooked.at(-1)}`;
+    lines.push(`Sorry for the back-and-forth: ${who} ${rebooked.length === 1 ? "is" : "are"} coming after all, so ${rebooked.length === 1 ? "they're" : "they're all"} back on your list.`);
+  }
   // How many people, and when to leave so every pickup is on time and they reach church early.
   const people = cars.reduce((n, c) => n + c.stops.reduce((m, s) => m + (s.seats || 1), 0), 0);
   lines.push(`You have ${people} ${people === 1 ? "person" : "people"} to pick up.`);
@@ -107,4 +111,14 @@ export function riderCancelledToDriver(sunday, driver, rider, othersLeft) {
   return `Hi ${first(driver.name)}, ${first(rider?.name)} has cancelled their ride for ${fmtDate(sunday)}, so you don't need to pick them up. ${othersLeft
     ? "I'll send your updated pickup list and leave time shortly."
     : "You have no pickups now. Thank you for being ready to help!"}`;
+}
+
+/** Short nudge with the link: the driver answers Yes or No in the app (address shared there only if they get the ride). */
+export function helpAskText(sunday, driver, riderName, neighbourhood, seats, awayMin, pickupMin, appUrl = "") {
+  return `Hi ${first(driver.name)}, a last-minute ride request for ${fmtDate(sunday)}: ${first(riderName)}${neighbourhood ? ` in ${neighbourhood}` : ""} needs a ride to church${seats > 1 ? ` (${seats} people)` : ""}, about ${awayMin} minutes from you, pickup around ${fmtMin(pickupMin)}. Can you help? Please tap Yes or No in the app: ${appUrl || "the ride app"}`;
+}
+
+/** Thank-you to the driver who said yes, with the details (they also see them in the app). */
+export function helpConfirmText(sunday, driver, h) {
+  return `Thank you, ${first(driver.name)}! You're picking up ${h.riderName} on ${fmtDate(sunday)} around ${fmtMin(h.pickupMin)} at ${h.address}${h.neighbourhood ? ` (${h.neighbourhood})` : ""}${h.riderPhone ? `. Their number: ${h.riderPhone}` : ""}. The details are in the app under My Sundays too.`;
 }
