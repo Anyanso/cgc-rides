@@ -49,8 +49,20 @@ export function waitlisted(sunday, rider) {
 export function driverRoute(sunday, driver, cars, ridersById, groupSizes = new Map()) {
   const details = CONFIG.texts?.includeDetails !== false;
   const lines = [`Hi ${first(driver.name)}, thank you for driving on ${fmtDate(sunday)}.`];
+  // How many people, and when to leave so every pickup is on time and they reach church early.
+  const people = cars.reduce((n, c) => n + c.stops.reduce((m, s) => m + (s.seats || 1), 0), 0);
+  lines.push(`You have ${people} ${people === 1 ? "person" : "people"} to pick up.`);
+  const leaveLine = (car) => {
+    const leave = car.stops[0]?.departMin, arrive = car.stops[0]?.arriveMin;
+    const from = car.trip > 1 ? "church" : "home";
+    return leave != null
+      ? `Please leave ${from} by ${fmtMin(leave)}${arrive != null ? ` to reach church by ${fmtMin(arrive)}` : ""} (service is at ${svcLabel()}).`
+      : `Please leave ${from} in good time to reach your first pickup by ${fmtMin(car.stops[0]?.pickupMin)}${arrive != null ? ` and church by ${fmtMin(arrive)}` : ""}.`;
+  };
+  if (cars.length === 1) lines.push(leaveLine(cars[0]));
   for (const car of cars) {
-    lines.push(cars.length > 1 ? `Trip ${car.trip}:` : "Your pickups:");
+    if (cars.length > 1) lines.push(`Trip ${car.trip}: ${leaveLine(car)}`);
+    lines.push("Your pickups:");
     for (const s of car.stops) {
       const r = ridersById.get(s.riderId);
       const where = details

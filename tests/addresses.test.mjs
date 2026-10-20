@@ -130,3 +130,13 @@ test("an outdated search can be cancelled", async () => {
   await suggestAddresses("1666 Stonebridge", { signal: ctl.signal, fetchFn: async (_u, opts) => { seen = opts.signal; return { ok: true, json: async () => ({ features: [] }) }; } });
   assert.equal(seen, ctl.signal);
 });
+
+test("the driver's message says how many people and when to leave home", async () => {
+  const { driverRoute } = await import("../js/texts.js");
+  const cars = [{ trip: 1, stops: [{ riderId: "jo", pickupMin: 665, seats: 1, departMin: 650, arriveMin: 690 }] }];
+  const riders = new Map([["jo", { name: "Jo", address: "639 Addie Crescent", neighbourhood: "Forest Grove", phone: "306-370-9965" }]]);
+  const msg = driverRoute("2026-10-25", { name: "Dami" }, cars, riders);
+  assert.match(msg, /You have 1 person to pick up\./);
+  assert.match(msg, /Please leave home by 10:50 AM to reach church by 11:30 AM/);
+  assert.match(msg, /11:05 AM {2}Jo, 639 Addie Crescent \(Forest Grove\), 306-370-9965/);
+});
