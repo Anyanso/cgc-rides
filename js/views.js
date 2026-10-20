@@ -454,10 +454,7 @@ function textsTab(S) {
   } else {
     html += banner("info", "Approve the plan to see each rider's and driver's message.");
   }
-  html += `<article class="card"><strong>Last-minute: ask drivers for help</strong>
-    <form data-form="broadcast" class="stack"><label class="field">Rider's first name<input name="who" required></label>
-    <label class="field">Neighbourhood<input name="where"></label><button class="btn primary" type="submit">Write message</button></form>
-    ${S.broadcast ? `<pre class="msg">${esc(S.broadcast)}</pre>${btn("Copy", "copy", { text: S.broadcast }, "primary")}` : ""}</article>`;
+  html += lastMinuteCard(S);
   return html;
 }
 
@@ -483,4 +480,64 @@ export function roleView(S) {
   if (S.me.role === "leader") return leaderView(S);
   if (S.me.role === "driver") return tabsFor(S, [["sundays", "My Sundays"], ["details", "My details"]]) + driverView(S);
   return tabsFor(S, [["rides", "Rides"], ["details", "My details"]]) + riderView(S);
+}
+
+// ---------------------------------------------------------------- last-minute help
+
+function lastMinuteCard(S) {
+  const sunday = S.sunday;
+  const pv = S.planView;
+  const waiting = new Set((pv?.waitlist || S.data.plans[sunday]?.waitlist || []).map((w) => w.riderId));
+  const asking = new Set(S.data.requests.filter((r) => r.sunday === sunday && r.status !== "cancelled").map((r) => r.riderId));
+  const riders = S.data.profiles.filter((p) => p.role === "rider").sort((a, b) => a.name.localeCompare(b.name));
+  const opt = (p) => `<option value="${esc(p.id)}" ${S.help?.riderId === p.id ? "selected" : ""} ${isConfirmed(p) ? "" : "disabled"}>${esc(p.name)}${p.neighbourhood ? ` · ${esc(p.neighbourhood)}` : ""}${isConfirmed(p) ? "" : " (address not confirmed)"}</option>`;
+  const group = (label, list) => (list.length ? `<optgroup label="${esc(label)}">${list.map(opt).join("")}</optgroup>` : "");
+  const form = `<form data-form="help" class="stack">
+      <label class="field"><span>Who needs a ride?</span><select name="helpRider">
+        <option value="">Choose a rider…</option>
+        ${group("Waiting for a seat this Sunday", riders.filter((p) => waiting.has(p.id)))}
+        ${group("Asking this Sunday", riders.filter((p) => asking.has(p.id) && !waiting.has(p.id)))}
+        ${group("Other registered riders", riders.filter((p) => !asking.has(p.id)))}
+      </select></label>
+      <details class="newrider" ${S.help?.newRider ? "open" : ""}><summary>Someone not registered? Type their address</summary>
+        <div class="stack">
+          <label class="field"><span>Their first name</span><input name="helpName" value="${esc(S.help?.newRider?.name || "")}"></label>
+          <div class="field addr">
+            <label for="help-addr">Their address</label>
+            <input id="help-addr" name="address" value="${esc(S.help?.newRider?.address || "")}" autocomplete="off" placeholder="e.g. 639 Addie Crescent" aria-autocomplete="list" aria-controls="help-suggest">
+            <div class="suggest" id="help-suggest" role="listbox" hidden></div>
+            <p class="small muted addr-status" aria-live="polite">Pick their address from the list. It's checked to the house number, like everyone else's.</p>
+            <input type="hidden" name="pickedAddress" value=""><input type="hidden" name="pickedLat" value=""><input type="hidden" name="pickedLng" value="">
+          </div>
+        </div></details>
+      <label class="field"><span>Seats needed (the rider plus anyone with them)</span><input name="helpSeats" type="number" min="1" max="10" value="${esc(S.help?.seats || 1)}"></label>
+      <button class="btn primary" type="submit">Find the closest drivers</button>
+    </form>`;
+
+  let results = "";
+  const h = S.help;
+  if (h?.result && h.sunday === sunday) {
+    const r = h.result;
+    const rows = r.list.map((x) => {
+      const d = x.driver;
+      const status = x.driving
+        ? badge(x.fits ? `Driving this Sunday · ${x.freeSeats} free seat${x.freeSeats === 1 ? "" : "s"}` : "Driving this Sunday · car full", x.fits ? "ok" : "muted")
+        : badge("Not down to drive this Sunday", "muted");
+      const msg = T.lastMinuteAsk(sunday, d, h.name, h.neighbourhood, h.seats, x.awayMin, r.pickupMin);
+      const put = x.driving && x.fits && h.riderId
+        ? btn(`Put ${firstName(h.name)} in ${firstName(d.name)}'s car`, "help-assign", { rider: h.riderId, driver: d.id, seats: h.seats }, "primary") : "";
+      return `<li class="helper"><div><strong>${esc(d.name)}</strong> ${status}<br>
+        <span class="small">About <strong>${esc(x.awayMin)} min</strong> from ${esc(firstName(h.name))} · ${esc(x.detourMin)} min out of their way from home${d.phone ? ` · ${telLink(d.phone)}` : ""}</span>
+        <pre class="msg">${esc(msg)}</pre><div class="row wrap">${btn("Copy message", "copy", { text: msg })}${put}</div></div></li>`;
+    }).join("");
+    results = `<h4>Closest drivers for ${esc(h.name)}${h.neighbourhood ? ` (${esc(h.neighbourhood)})` : ""}</h4>
+      <p class="small muted">Suggested pickup around <strong>${esc(fmtMin(r.pickupMin))}</strong> to reach church on time. Only cleared drivers with a confirmed address are listed, closest first, with those already driving this Sunday at the top. Each message gives the neighbourhood only; send the address once they say yes.</p>
+      ${r.travelNote ? banner("warn", esc(r.travelNote)) : ""}
+      ${rows ? `<ol class="plain helpers">${rows}</ol>` : `<p class="muted">No cleared drivers with a confirmed address yet.</p>`}
+      ${h.riderId ? "" : `<p class="small">${esc(firstName(h.name))} isn't registered. Once a driver says yes, add them under <strong>People</strong> so they appear in the plan.</p>`}
+      ${copyBlock("Or ask the whole group", T.lastMinuteBroadcast(sunday, firstName(h.name), h.neighbourhood, h.seats), "For the drivers' group chat. No address or phone number.")}`;
+  }
+  return `<article class="card"><strong>Last-minute: find a driver</strong>
+    <p class="small muted">For someone who still needs a ride. The app finds the cleared drivers closest to them, using the same address check and road times as the plan.</p>
+    ${form}${results}</article>`;
 }

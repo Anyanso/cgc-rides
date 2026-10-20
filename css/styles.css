@@ -91,3 +91,5 @@ summary{cursor:pointer;font-weight:600}
 .planactions{position:sticky;bottom:0;background:var(--paper);border-top:1px solid var(--line);padding:.7rem 0 calc(.6rem + env(safe-area-inset-bottom,0px));margin-top:.8rem;z-index:4}
 .planactions .row{gap:.6rem}
 .btn[disabled]{opacity:.55;cursor:not-allowed}
+.helpers{display:grid;gap:.6rem;margin:.6rem 0}.helper{border:1px solid var(--line);border-radius:12px;padding:.7rem .8rem;background:var(--paper)}
+.newrider summary{font-weight:500;font-size:.92rem}

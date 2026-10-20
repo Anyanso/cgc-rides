@@ -140,3 +140,24 @@ test("the driver's message says how many people and when to leave home", async (
   assert.match(msg, /Please leave home by 10:50 AM to reach church by 11:30 AM/);
   assert.match(msg, /11:05 AM {2}Jo, 639 Addie Crescent \(Forest Grove\), 306-370-9965/);
 });
+
+test("last-minute help ranks cleared, confirmed drivers; drivers not yet cleared are never offered", async () => {
+  const { rankHelpers } = await import("../js/planner.js");
+  const church = { lat: 52.1196, lng: -106.6592 };
+  const sunday = "2026-10-25";
+  const d = (id, lat, lng, extra = {}) => ({ id, name: id, role: "driver", status: "cleared", seats: 3, drivesEveryWeek: true, lat, lng, geoSource: "verified", ...extra });
+  const data = {
+    weeks: [],
+    profiles: [
+      d("near", 52.1006, -106.6211), d("far", 52.175, -106.59),
+      d("pending", 52.1007, -106.6212, { status: "pending" }),
+      d("unconfirmed", 52.1007, -106.6212, { geoSource: "address" }),
+    ],
+  };
+  const jo = { name: "Jo", lat: 52.1005, lng: -106.621, geoSource: "verified" };
+  const r = await rankHelpers({ data, sunday, church, config: CONFIG, rider: jo, seats: 1, fetchFn: async () => { throw new Error("offline"); } });
+  assert.deepEqual(r.list.map((x) => x.driver.id), ["near", "far"]);
+  assert.ok(r.list[0].awayMin < r.list[1].awayMin);
+  assert.equal(typeof r.pickupMin, "number");
+  await assert.rejects(rankHelpers({ data, sunday, church, config: CONFIG, rider: { ...jo, geoSource: "neighbourhood" } }), /isn't confirmed/);
+});

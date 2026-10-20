@@ -96,3 +96,8 @@ export function driverCancelled(sunday, rider, newDriver, stop) {
 export function lastMinuteBroadcast(sunday, riderFirstName, neighbourhood, seatsNeeded = 1) {
   return `Last-minute help needed (${fmtDate(sunday)}): ${riderFirstName}${neighbourhood ? ` in ${neighbourhood}` : ""} needs a ride to church. Can anyone with ${seatsNeeded} free seat pick them up? Please reply to the transport leader.`;
 }
+
+/** One-to-one ask to a driver. Neighbourhood only: the full address is shared once they say yes. */
+export function lastMinuteAsk(sunday, driver, riderName, neighbourhood, seats, awayMin, pickupMin) {
+  return `Hi ${first(driver.name)}, a last-minute ride request for ${fmtDate(sunday)}: ${first(riderName)}${neighbourhood ? ` in ${neighbourhood}` : ""} needs a ride to church${seats > 1 ? ` (${seats} people)` : ""}. You're about ${awayMin} minutes from them. Could you pick them up around ${fmtMin(pickupMin)}? Please reply YES or NO, and I'll send you the address and details.`;
+}

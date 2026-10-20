@@ -3,7 +3,8 @@
 
 import { plan, evaluate, pointsFor } from "./matching.js";
 import { buildTravel } from "./routing.js";
-import { asDriver, isDriver } from "./models.js";
+import { asDriver, isDriver, driverAvailable } from "./models.js";
+import { toMin } from "./dates.js";
 import { isConfirmed } from "./geo.js";
 
 export function matchOptions(config) {
@@ -128,4 +129,39 @@ export function groupCars(assignments, drivers) {
   return [...cars.values()]
     .map((c) => ({ ...c, stops: c.stops.sort((x, y) => (x.order ?? 0) - (y.order ?? 0)) }))
     .sort((a, b) => (order.get(a.driverId) ?? 99) - (order.get(b.driverId) ?? 99) || a.trip - b.trip);
+}
+
+/**
+ * Last-minute help: who is best placed to pick up one rider?
+ * Only CLEARED drivers with a CONFIRMED home address are considered, and the rider's location
+ * must be confirmed too (never a guess). Uses the same road times and safety margin as the plan.
+ * rider: { name, lat, lng, neighbourhood }. assignments: the current plan for that Sunday.
+ * Returns { pickupMin, list: [{ driver, awayMin, detourMin, freeSeats, driving, fits }] }, best first:
+ * drivers already driving that Sunday with room, then others with room, then by fewest minutes out of their way.
+ */
+export async function rankHelpers({ data, sunday, church, config, rider, seats = 1, assignments = [], fetchFn }) {
+  if (!church) throw new Error("The church location isn't set.");
+  if (!isConfirmed(rider)) throw new Error("This rider's address isn't confirmed, so we can't work out who is closest. Confirm the address first.");
+  const drivers = data.profiles.filter(isDriver).filter((d) => d.status === "cleared" && isConfirmed(d) && d.seats > 0);
+  const rn = { id: "R:help", lat: rider.lat, lng: rider.lng };
+  const cn = { id: "church", lat: church.lat, lng: church.lng };
+  const node = (d) => ({ id: `D:${d.id}`, lat: d.lat, lng: d.lng });
+  const t = await buildTravel([cn, rn, ...drivers.map(node)], {
+    enabled: config.routing.enabled, baseUrl: config.routing.osrmUrl,
+    ...(fetchFn ? { fetchFn, delayMs: 0 } : {}),
+  });
+  const travel = withMargin(t.travel, t.source, config.matching);
+  const stop = config.matching.stopMin ?? 3;
+  const target = toMin(config.service.time) - config.service.arriveBeforeMin;
+  const pickupMin = Math.floor((target - travel(rn, cn) - stop) / 5) * 5;
+  const list = drivers.map((d) => {
+    const dn = node(d);
+    const awayMin = travel(dn, rn);
+    const detourMin = Math.max(0, awayMin + stop + travel(rn, cn) - travel(dn, cn));
+    const driving = driverAvailable(d, data.weeks, sunday);
+    const used = assignments.filter((a) => a.driverId === d.id && (a.trip || 1) === 1).reduce((n, a) => n + (a.seats ?? 1), 0);
+    const freeSeats = Math.max(0, (d.seats || 0) - used);
+    return { driver: d, awayMin: Math.round(awayMin), detourMin: Math.round(detourMin), freeSeats, driving, fits: freeSeats >= seats };
+  }).sort((a, b) => (b.driving && b.fits) - (a.driving && a.fits) || b.fits - a.fits || a.detourMin - b.detourMin);
+  return { pickupMin, list, travelSource: t.source, travelNote: t.note };
 }

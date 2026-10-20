@@ -7,7 +7,7 @@ import { peopleCsv, backupJson, stamp, download } from "./backup.js";
 import { toISO, fmtDate } from "./dates.js";
 import { confirmAddress, suggestAddresses, refineSuggestions, normalizePhone, normalizePostal, isConfirmed } from "./geo.js";
 import { driverIssue } from "./matching.js";
-import { draftPlan, recompute, applyMove, reassignDriver, sundayPeople } from "./planner.js";
+import { draftPlan, recompute, applyMove, reassignDriver, sundayPeople, rankHelpers } from "./planner.js";
 import { driverAvailable, CONSENT_WORDING, isDriver } from "./models.js";
 import { shell, landingView, signInView, demoPickerView, roleView, esc } from "./views.js";
 import { lastMinuteBroadcast } from "./texts.js";
@@ -21,7 +21,7 @@ const S = {
   screen: "landing", session: null, me: null, tab: null,
   sundays: [], sunday: null, rides: [], weeks: [], routes: {},
   data: null, planView: null, planOpen: false, church: null, churchWarning: null, churchFound: null, formDraft: null,
-  editing: null, busy: false, toast: "", error: "", signInSent: "", regRole: null, broadcast: "",
+  editing: null, busy: false, toast: "", error: "", signInSent: "", regRole: null, broadcast: "", help: null,
   now: new Date(), todayISO: "", demoPeople: null, appUrl: "", demoChurchLabel: DEMO_CHURCH.label,
 };
 
@@ -329,6 +329,22 @@ const actions = {
     say("Re-placed that group across cars. Everyone else stayed where they were. Review, then save.");
   },
   async resolve(d) { await store.resolveAlert(d.id); await reload(); },
+  /** Puts a last-minute rider straight into a driver's car (trip 1), then shows the plan to save or approve. */
+  async "help-assign"(d) {
+    needChurch();
+    const seats = Math.max(1, Number(d.seats) || 1);
+    const req = S.data.requests.find((q) => q.riderId === d.rider && q.sunday === S.sunday && q.status !== "cancelled");
+    if (!req) { await store.addRequest(d.rider, S.sunday, { extraPeople: seats - 1 }); await reload(); }
+    if (!S.planView) { await autoUpdatePlan(); }
+    if (!S.planView) throw new Error("There's no plan for this Sunday yet. Open the Plan tab first.");
+    const inCar = S.planView.assignments.find((a) => a.riderId === d.rider);
+    const from = inCar ? `${inCar.driverId}|${inCar.trip || 1}` : "wait";
+    const moved = applyMove({ assignments: S.planView.assignments, waitlist: S.planView.waitlist }, d.rider, `${d.driver}|1`, from);
+    const res = await recompute({ data: S.data, sunday: S.sunday, church: S.church, config: CONFIG, ...moved });
+    S.planView = { ...S.planView, assignments: res.assignments, waitlist: res.waitlist, trips: res.trips, warnings: res.warnings, dirty: true, edited: true, travelNote: res.travelNote, travelSource: res.travelSource };
+    S.tab = "plan"; S.planOpen = true; S.help = null;
+    say("Added to the car. Check the times, then tap Approve & share to send everyone the update.");
+  },
   edit(d) { S.editing = d.id; S.formDraft = null; },
   "edit-cancel"() { S.editing = null; S.formDraft = null; },
   async "remove-person"(d) {
@@ -340,6 +356,33 @@ const actions = {
     say(`${res?.removed || p.name} was removed.` + (res?.plansReopened ? ` ${res.plansReopened} plan(s) went back to draft: please check and approve again.` : ""));
   },
 };
+
+/** Last-minute help: rank the closest cleared drivers for one rider (registered, or a typed address). */
+async function findHelpers(form) {
+  needChurch();
+  const f = new FormData(form);
+  const seats = Math.max(1, Math.min(10, Number(f.get("helpSeats")) || 1));
+  const riderId = (f.get("helpRider") || "").toString();
+  const typed = (f.get("address") || "").toString().trim();
+  let rider;
+  if (riderId) {
+    rider = S.data.profiles.find((p) => p.id === riderId);
+    S.help = { sunday: S.sunday, riderId, name: rider.name, neighbourhood: rider.neighbourhood, seats };
+  } else if (typed) {
+    const name = (f.get("helpName") || "").toString().trim() || "The rider";
+    const picked = f.get("pickedAddress") ? { address: f.get("pickedAddress").toString(), lat: Number(f.get("pickedLat")), lng: Number(f.get("pickedLng")) } : null;
+    const g = await confirmAddress(typed, { nominatimUrl: CONFIG.geocoding.nominatimUrl });
+    const ok = g.ok ? g : (picked && picked.address === typed ? { ...picked, neighbourhood: null } : null);
+    S.help = { sunday: S.sunday, riderId: null, name, seats, newRider: { name, address: typed } };
+    if (!ok) throw new Error(g.reason);
+    rider = { lat: ok.lat, lng: ok.lng, geoSource: "verified" };
+    S.help.neighbourhood = ok.neighbourhood || null;
+  } else {
+    throw new Error("Choose a rider, or type the address of someone who isn't registered.");
+  }
+  const assignments = S.planView?.assignments || S.data.plans[S.sunday]?.assignments || [];
+  S.help.result = await rankHelpers({ data: S.data, sunday: S.sunday, church: S.church, config: CONFIG, rider, seats, assignments });
+}
 
 async function onMove(el) {
   if (!el.value) return;
@@ -354,7 +397,7 @@ async function onSubmit(form) {
   if (kind === "signin") { const email = new FormData(form).get("email").toString().trim(); await store.signIn(email); S.signInSent = email; return; }
   if (kind === "code") { await store.verifyCode(S.signInSent, new FormData(form).get("code").toString().trim()); S.signInSent = ""; S.session = store.session(); await reload(); return; }
   if (kind === "request") { const f = new FormData(form); await store.requestRide(form.dataset.sunday, { rideHome: f.get("rideHome") === "on", note: (f.get("note") || "").toString().trim() || null, extraPeople: Math.max(0, Math.min(10, Number(f.get("extraPeople")) || 0)), canSplit: f.get("canSplit") === "on" }); await reload(); say("Request sent. We'll confirm your driver after requests close."); return; }
-  if (kind === "broadcast") { const f = new FormData(form); S.broadcast = lastMinuteBroadcast(S.sunday, f.get("who").toString().trim(), f.get("where").toString().trim()); return; }
+  if (kind === "help") { await findHelpers(form); return; }
   if (kind === "profile") {
     const leaderEditing = S.me?.role === "leader" && S.editing;
     const raw = readProfile(form);
@@ -459,11 +502,11 @@ function pickSuggestion(btn) {
   if (!s || !form) return;
   field(form, "address").value = s.address;
   setPicked(form, s);
-  if (s.postcode) field(form, "postalCode").value = s.postcode;
-  if (s.neighbourhood) { field(form, "neighbourhood").value = s.neighbourhood; form.querySelector(".hood-name").textContent = s.neighbourhood; }
+  if (s.postcode && field(form, "postalCode")) field(form, "postalCode").value = s.postcode;
+  if (s.neighbourhood && field(form, "neighbourhood")) { field(form, "neighbourhood").value = s.neighbourhood; form.querySelector(".hood-name").textContent = s.neighbourhood; }
   form.querySelector(".addr-status").innerHTML = `<span class="ok-text">✓ Found on the map${s.neighbourhood ? ` · ${esc(s.neighbourhood)}` : ""}</span>${s.postcode ? "" : " Please type your postal code below."}`;
   box.hidden = true;
-  field(form, "postalCode").focus();
+  (field(form, "postalCode") || field(form, "helpSeats") || field(form, "address")).focus();
 }
 
 root.addEventListener("click", (e) => {
