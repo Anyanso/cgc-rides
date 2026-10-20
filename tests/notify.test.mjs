@@ -46,3 +46,16 @@ test("the notifications card: invitation, iPhone guide, line when on, nothing wh
   assert.equal(pushCard(S("unsupported")), "");
   assert.equal(pushCard(S(null)), "");
 });
+
+test("address reminders: pins placed by hand, and homes not on the map yet (people who can sign in)", async () => {
+  const { remindGroups } = await import("../js/views.js");
+  const P = (id, extra) => ({ id, userId: id, name: id, role: "rider", lat: 52.1, lng: -106.6, geoSource: "verified", ...extra });
+  const S = { data: { profiles: [
+    P("a", { geoSource: "pin" }), P("b", { geoSource: "gps" }), P("c", { geoSource: "none", lat: null, lng: null }),
+    P("d", { geoSource: "none", lat: null, lng: null, userId: null }), // added by the leader: no sign-in
+    P("e", { role: "leader", geoSource: "none", lat: null, lng: null }), // leader who doesn't drive
+  ] } };
+  const g = remindGroups(S);
+  assert.deepEqual(g.pins.map((p) => p.id), ["a"]);
+  assert.deepEqual(g.unconfirmed.map((p) => p.id), ["c"]);
+});

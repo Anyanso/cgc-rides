@@ -495,6 +495,8 @@ test("a home can be saved with a pin the person placed; unknown sources are refu
   await db.exec(`set role authenticated; select set_config('request.jwt.claim.sub','${u}',false), set_config('request.jwt.claim.email','pin@example.com',false);`);
   try {
     await db.query("insert into profiles (user_id,full_name,home_address,lat,lng,geo_source) values ($1,'Pat Pin','12 Somewhere St',52.12,-106.65,'pin')", [u]);
+    await db.query("update profiles set geo_source='gps' where user_id=$1", [u]);
+    await db.query("update profiles set geo_source='pin' where user_id=$1", [u]);
     await assert.rejects(() => db.query("update profiles set geo_source='guess' where user_id=$1", [u]), /check constraint/);
   } finally { await db.exec("reset role"); }
   assert.equal((await q("select geo_source from profiles where user_id=$1", [u]))[0].geo_source, "pin");

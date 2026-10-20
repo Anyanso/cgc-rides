@@ -225,7 +225,7 @@ create index if not exists push_queue_unsent_idx on push_queue (created_at) wher
 
 -- Where a home's location came from. 'pin': the person placed a pin on their house themselves.
 alter table profiles drop constraint if exists profiles_geo_source_check;
-alter table profiles add constraint profiles_geo_source_check check (geo_source in ('verified', 'address', 'neighbourhood', 'manual', 'pin', 'none'));
+alter table profiles add constraint profiles_geo_source_check check (geo_source in ('verified', 'address', 'neighbourhood', 'manual', 'gps', 'pin', 'none'));
 
 create index if not exists assignments_driver_idx on assignments (driver_id);
 create index if not exists requests_sunday_idx on ride_requests (sunday);
