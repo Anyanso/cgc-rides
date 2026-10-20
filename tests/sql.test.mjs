@@ -410,3 +410,81 @@ test("team: only the supervisor changes who leads; two leaders at most; leaders 
   assert.equal((await q("select is_supervisor from profiles where id=$1", [P.leader]))[0].is_supervisor, true);
   assert.equal((await q("select role from profiles where id=$1", [ids.t2]))[0].role, "rider");
 });
+
+test("leaders see who signed in but never registered; nobody else can", async () => {
+  const ghost = "00000000-0000-0000-0000-0000000000c9";
+  await db.query("insert into auth.users (id,email,last_sign_in_at) values ($1,'ghost@example.com',now())", [ghost]);
+  const rows = await as("leader", () => q("select * from unregistered_people()"));
+  assert.ok(rows.some((r) => r.email === "ghost@example.com"));
+  assert.ok(!rows.some((r) => r.email === "leader@example.com"));
+  await assert.rejects(() => as("r1", () => q("select * from unregistered_people()")), /Only leaders/);
+});
+
+test("notifications: devices are saved per person; alerts, help asks and new drivers queue messages; only the sender can claim them", async () => {
+  const sub = (n) => [`https://push.example.com/${n}`, "BP256dhKey", "authSecret", "Test phone"];
+  // Fresh people (earlier tests remove some).
+  Object.assign(U, { nd: "00000000-0000-0000-0000-0000000001a1", nr: "00000000-0000-0000-0000-0000000001a2", nr2: "00000000-0000-0000-0000-0000000001a3" });
+  for (const [k, name, role] of [["nd", "Dee Push", "driver"], ["nr", "Rita Push", "rider"], ["nr2", "Ray Push", "rider"]]) {
+    await db.query("insert into auth.users (id,email) values ($1,$2)", [U[k], `${k}@example.com`]);
+    await db.query("insert into profiles (user_id,full_name,role,seats) values ($1,$2,$3,3)", [U[k], name, role]);
+  }
+  const N = {};
+  for (const k of ["nd", "nr", "nr2"]) N[k] = (await q("select id from profiles where user_id=$1", [U[k]]))[0].id;
+  await as("leader", () => db.query("select save_push_sub($1,$2,$3,$4)", sub("leader")));
+  await as("nd", () => db.query("select save_push_sub($1,$2,$3,$4)", sub("d1")));
+  await as("nr", () => db.query("select save_push_sub($1,$2,$3,$4)", sub("r1")));
+  await assert.rejects(() => as("nr", () => db.query("select save_push_sub('http://evil.example/x','a','b')")), /not valid/);
+  // People see only their own device; leaders see who has notifications on, not device details.
+  assert.equal((await as("nr", () => q("select * from push_subs"))).length, 1);
+  assert.equal((await as("leader", () => q("select * from push_subs"))).length, 1);
+  const on = (await as("leader", () => q("select push_people() as id"))).map((r) => r.id);
+  assert.ok(on.includes(N.nr) && on.includes(N.nd));
+  await assert.rejects(() => as("nr", () => q("select push_people()")), /Only leaders/);
+  await db.exec("delete from push_queue");
+
+  // An alert reaches the leaders.
+  await db.query("insert into alerts (kind, message) values ('rider_cancel', 'Rita cancelled.')");
+  // A last-minute ask reaches that driver.
+  const [h] = await as("leader", () => q("insert into help_requests (sunday, rider_name, address, neighbourhood) values ($1,'Joe Bloggs','1 Main St','Nutana') returning id", [SUN]));
+  await as("leader", () => db.query("insert into help_asks (request_id, driver_id) values ($1,$2)", [h.id, N.nd]));
+  // The leader's approval messages; people without notifications are skipped.
+  const n = await as("leader", () => q("select queue_push($1::jsonb) as n", [JSON.stringify([
+    { profile_id: N.nr, title: "Your ride is confirmed", body: "Dee picks you up at 10:50 AM.", tag: "ride" },
+    { profile_id: N.nr2, title: "Your ride is confirmed", body: "No device.", tag: "ride" }])]));
+  assert.equal(n[0].n, 1);
+  await assert.rejects(() => as("nr", () => q("select queue_push('[]'::jsonb)")), /Only leaders/);
+
+  // Riders and leaders can't read or claim the queue.
+  assert.equal((await as("nr", () => q("select * from push_queue"))).length, 0);
+  await assert.rejects(() => as("leader", () => q("select * from claim_push()")), /permission denied/);
+  // The Edge Function (service role) claims each message once.
+  await db.exec("set role service_role");
+  const claimed = await q("select * from claim_push() order by queue_id");
+  const again = await q("select * from claim_push()");
+  await db.exec("reset role");
+  assert.deepEqual(claimed.map((c) => [c.title, c.endpoint]), [
+    ["Rides alert", "https://push.example.com/leader"],
+    ["Can you help with a ride?", "https://push.example.com/d1"],
+    ["Your ride is confirmed", "https://push.example.com/r1"],
+  ]);
+  assert.match(claimed[1].body, /^Joe in Nutana needs a ride on \w+day\. Open the app/);
+  assert.equal(again.length, 0);
+
+  // Turning off removes only your own device.
+  await as("nd", () => db.query("select remove_push_sub($1)", ["https://push.example.com/r1"]));
+  await as("nr", () => db.query("select remove_push_sub($1)", ["https://push.example.com/r1"]));
+  assert.deepEqual((await q("select endpoint from push_subs order by endpoint")).map((r) => r.endpoint), ["https://push.example.com/d1", "https://push.example.com/leader"]);
+});
+
+test("notifications: a new driver waiting for approval tells the leaders", async () => {
+  await db.exec("delete from push_queue");
+  const u = "00000000-0000-0000-0000-0000000000c8";
+  await db.query("insert into auth.users (id,email) values ($1,'newdriver@example.com')", [u]);
+  await as("d2", () => q("select 1")); // no-op, keeps the session helper warm
+  await db.exec(`set role authenticated; select set_config('request.jwt.claim.sub','${u}',false), set_config('request.jwt.claim.email','newdriver@example.com',false);`);
+  await db.query("insert into profiles (user_id, full_name, role, seats) values ($1,'Nia Newdriver','driver',3)", [u]);
+  await db.exec("reset role");
+  const rows = await q("select title, body from push_queue");
+  assert.deepEqual(rows.map((r) => r.title), ["New driver to approve"]);
+  assert.match(rows[0].body, /^Nia Newdriver registered as a driver/);
+});
