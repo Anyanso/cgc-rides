@@ -488,3 +488,14 @@ test("notifications: a new driver waiting for approval tells the leaders", async
   assert.deepEqual(rows.map((r) => r.title), ["New driver to approve"]);
   assert.match(rows[0].body, /^Nia Newdriver registered as a driver/);
 });
+
+test("a home can be saved with a pin the person placed; unknown sources are refused", async () => {
+  const u = "00000000-0000-0000-0000-0000000001b1";
+  await db.query("insert into auth.users (id,email) values ($1,'pin@example.com')", [u]);
+  await db.exec(`set role authenticated; select set_config('request.jwt.claim.sub','${u}',false), set_config('request.jwt.claim.email','pin@example.com',false);`);
+  try {
+    await db.query("insert into profiles (user_id,full_name,home_address,lat,lng,geo_source) values ($1,'Pat Pin','12 Somewhere St',52.12,-106.65,'pin')", [u]);
+    await assert.rejects(() => db.query("update profiles set geo_source='guess' where user_id=$1", [u]), /check constraint/);
+  } finally { await db.exec("reset role"); }
+  assert.equal((await q("select geo_source from profiles where user_id=$1", [u]))[0].geo_source, "pin");
+});

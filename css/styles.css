@@ -100,3 +100,7 @@ summary{cursor:pointer;font-weight:600}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:.6rem}@media (max-width:420px){.grid2{grid-template-columns:1fr}}
 .chip.special{border-color:var(--gold)}
 .svcline{margin:.4rem 0;font-size:1.02rem}
+.pinbar{margin:.35rem 0 0;line-height:1.9}
+.pinbar .btn.link{padding:0;min-height:0;text-align:left}
+.pinbox{margin-top:.6rem;border:1px solid var(--line);border-radius:12px;padding:.7rem;background:var(--paper)}
+.pinmap{height:300px;border-radius:10px;margin:.5rem 0;z-index:0}
