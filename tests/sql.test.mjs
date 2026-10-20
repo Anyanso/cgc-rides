@@ -249,3 +249,65 @@ test("only the leader can remove people, and leaders cannot be removed", async (
   await assert.rejects(() => as("leader", () => db.query("select remove_person($1)", [P.leader])), /Leaders cannot be removed/);
   await assert.rejects(() => as("leader", () => db.query("select remove_person($1)", ["00000000-0000-0000-0000-000000000999"])), /not found/);
 });
+
+test("last-minute request: drivers asked see it, first yes wins, only the winner sees the address", async () => {
+  // Two cleared drivers of its own (earlier tests remove people).
+  Object.assign(U, { h1: "00000000-0000-0000-0000-0000000000a1", h2: "00000000-0000-0000-0000-0000000000a2" });
+  for (const k of ["h1", "h2"]) {
+    await db.query("insert into auth.users (id,email) values ($1,$2)", [U[k], `${k}@example.com`]);
+    await db.query("insert into profiles (user_id,email,full_name,role,driver_status,seats) values ($1,$2,$3,'driver','cleared',3)", [U[k], `${k}@example.com`, `Helper ${k}`]);
+  }
+  const [h1, h2] = [(await q("select id from profiles where user_id=$1", [U.h1]))[0].id, (await q("select id from profiles where user_id=$1", [U.h2]))[0].id];
+  const P2 = { d1: h1, d2: h2 };
+  const [{ id: req }] = await as("leader", () => q(
+    "insert into help_requests (sunday,rider_name,rider_phone,address,neighbourhood,lat,lng,seats,pickup_min) values ($1,'Stephan Lee','306-555-0199','238 Fairmont Drive','Fairhaven',52.12,-106.73,1,670) returning id", [SUN]));
+  await as("leader", () => db.query("insert into help_asks (request_id,driver_id,away_min) values ($1,$2,13),($1,$3,17)", [req, P2.d1, P2.d2]));
+
+  // Drivers can't read the tables directly, only through my_help_requests().
+  assert.equal((await as("h1", () => q("select * from help_requests"))).length, 0);
+  const before = await as("h1", () => q("select * from my_help_requests()"));
+  assert.equal(before.length, 1);
+  assert.equal(before[0].rider_name, "Stephan");
+  assert.equal(before[0].address, null, "no address before saying yes");
+  assert.equal((await as("r1", () => q("select * from my_help_requests()"))).length, 0, "riders see nothing");
+
+  assert.equal((await as("h1", () => q("select answer_help($1,'yes') r", [req])))[0].r, "accepted");
+  assert.equal((await as("h2", () => q("select answer_help($1,'yes') r", [req])))[0].r, "taken");
+  const d1 = (await as("h1", () => q("select * from my_help_requests()")))[0];
+  const d2 = (await as("h2", () => q("select * from my_help_requests()")))[0];
+  assert.equal(d1.address, "238 Fairmont Drive");
+  assert.equal(d1.rider_phone, "306-555-0199");
+  assert.equal(d1.mine, true);
+  assert.equal(d2.address, null, "the second driver never sees the address");
+  assert.equal(d2.status, "covered");
+  assert.equal((await q("select accepted_by from help_requests where id=$1", [req]))[0].accepted_by, P2.d1);
+  assert.equal((await q("select count(*)::int n from alerts where kind='info' and driver_id=$1", [P2.d1]))[0].n, 1);
+
+  // Someone who wasn't asked can't answer.
+  await assert.rejects(() => as("r1", () => q("select answer_help($1,'yes')", [req])), /not sent to you/);
+});
+
+test("a rider who cancels leaves the plan; asking again needs the leader's approval", async () => {
+  Object.assign(U, { c1: "00000000-0000-0000-0000-0000000000c1", c2: "00000000-0000-0000-0000-0000000000c2" });
+  await db.query("insert into auth.users (id,email) values ($1,'c1@example.com'),($2,'c2@example.com')", [U.c1, U.c2]);
+  await db.query("insert into profiles (user_id,full_name,role,driver_status,seats) values ($1,'Dami Driver','driver','cleared',3)", [U.c1]);
+  await db.query("insert into profiles (user_id,full_name,role) values ($1,'Jo Rider','rider')", [U.c2]);
+  const dami = (await q("select id from profiles where user_id=$1", [U.c1]))[0].id;
+  const jo = (await q("select id from profiles where user_id=$1", [U.c2]))[0].id;
+  const S2 = sundayInDays(21);
+  await as("c2", () => db.query("insert into ride_requests (rider_id,sunday) values ($1,$2)", [jo, S2]));
+  await as("leader", () => db.query("select save_plan($1,'approved','{}',$2,'[]')", [S2, JSON.stringify([{ riderId: jo, driverId: dami, trip: 1, order: 0, pickupMin: 665, readyByMin: 660, arriveMin: 690, departMin: 650 }])]));
+  assert.equal((await as("c2", () => q("select status from my_rides() where sunday=$1", [S2])))[0].status, "seated");
+
+  await as("c2", () => db.query("update ride_requests set status='cancelled' where rider_id=$1 and sunday=$2", [jo, S2]));
+  assert.equal((await q("select count(*)::int n from assignments a join plans p on p.id=a.plan_id where p.sunday=$1", [S2]))[0].n, 0, "seat removed");
+  const [al] = await q("select * from alerts where kind='rider_cancel' and rider_id=$1", [jo]);
+  assert.equal(al.driver_id, dami);
+  assert.match(al.message, /Jo Rider cancelled their ride for .* They were in Dami Driver's car \(pickup 11:05 AM\)\./);
+
+  // Asks again: NOT seated until the leader approves again; the cancel alert closes.
+  await as("c2", () => db.query("update ride_requests set status='requested' where rider_id=$1 and sunday=$2", [jo, S2]));
+  assert.equal((await as("c2", () => q("select status from my_rides() where sunday=$1", [S2])))[0].status, "requested");
+  assert.equal((await as("c1", () => q("select * from my_route($1)", [S2]))).length, 0, "the driver doesn't see them yet");
+  assert.equal((await q("select resolved from alerts where id=$1", [al.id]))[0].resolved, true);
+});

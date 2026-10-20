@@ -65,6 +65,7 @@ export function createDemoStore({ now = () => new Date() } = {}) {
       need(db.sundays.includes(sunday), "That Sunday is not open for requests.");
       need(!isClosed(sunday, now()), `Requests for this Sunday closed on Saturday at noon. Please contact the transport leader.`);
       const ex = db.requests.find((r) => r.riderId === m.id && r.sunday === sunday);
+      if (ex && ex.status === "cancelled") db.alerts.forEach((a) => { if (a.kind === "rider_cancel" && a.riderId === m.id && a.sunday === sunday) a.resolved = true; });
       if (ex) Object.assign(ex, { status: "requested", rideHome, note, extraPeople, canSplit });
       else db.requests.push({ id: `q-${m.id}-${sunday}`, riderId: m.id, sunday, rideHome, note, extraPeople, canSplit, status: "requested" });
     },
@@ -72,10 +73,14 @@ export function createDemoStore({ now = () => new Date() } = {}) {
       const m = me();
       const r = db.requests.find((x) => x.riderId === m.id && x.sunday === sunday);
       need(r, "No request to cancel.");
-      const had = db.plans[sunday]?.assignments.some((a) => a.riderId === m.id);
-      if (r.status !== "cancelled" && had) {
-        db.alerts.push({ id: `a${db.alerts.length + 1}`, kind: "rider_cancel", sunday, riderId: m.id, driverId: null, resolved: false,
-          message: `${m.name} can't make it on ${sunday} and had a seat.`, createdAt: now().toISOString() });
+      // Same as the database: the rider leaves the plan; asking again makes them a new request.
+      const plan = db.plans[sunday];
+      const seat = plan?.assignments.find((a) => a.riderId === m.id);
+      if (plan) { plan.assignments = plan.assignments.filter((a) => a.riderId !== m.id); plan.waitlist = plan.waitlist.filter((w) => w.riderId !== m.id); }
+      if (r.status !== "cancelled" && seat) {
+        const d = byId(seat.driverId);
+        db.alerts.push({ id: `a${db.alerts.length + 1}`, kind: "rider_cancel", sunday, riderId: m.id, driverId: seat.driverId, resolved: false,
+          message: `${m.name} cancelled their ride for ${sunday}. They were in ${d?.name}'s car.`, createdAt: now().toISOString() });
       }
       r.status = "cancelled";
     },
@@ -127,7 +132,40 @@ export function createDemoStore({ now = () => new Date() } = {}) {
     // ---- leader
     async leaderData() {
       need(isLeader(), "Only the transport leader can see this.");
-      return fresh({ profiles: db.profiles, requests: db.requests, weeks: db.weeks, plans: db.plans, alerts: db.alerts, consentLog: db.consentLog });
+      return fresh({ profiles: db.profiles, requests: db.requests, weeks: db.weeks, plans: db.plans, alerts: db.alerts, consentLog: db.consentLog, helpRequests: db.help });
+    },
+
+    // ---- last-minute requests (same rules as the database: first yes wins; address only for the winner)
+    async createHelpRequest(req, asks) {
+      need(isLeader(), "Only the transport leader can do this.");
+      const id = `h${db.help.length + 1}`;
+      db.help.unshift({ id, status: "open", acceptedBy: null, acceptedAt: null, createdAt: now().toISOString(), ...fresh(req),
+        asks: asks.map((a) => ({ driverId: a.driverId, awayMin: a.awayMin, answer: null })) });
+      return id;
+    },
+    async cancelHelpRequest(id) { need(isLeader(), "Only the transport leader can do this."); const h = db.help.find((x) => x.id === id); if (h) h.status = "cancelled"; },
+    async myHelpRequests() {
+      const m = me();
+      return db.help.filter((h) => h.status !== "cancelled" && h.sunday >= db.sundays[0] && h.asks.some((a) => a.driverId === m.id)).map((h) => {
+        const ask = h.asks.find((a) => a.driverId === m.id);
+        const mine = h.acceptedBy === m.id;
+        return { id: h.id, sunday: h.sunday, riderName: String(h.riderName).split(" ")[0], neighbourhood: h.neighbourhood, seats: h.seats, pickupMin: h.pickupMin,
+          awayMin: ask.awayMin, status: h.status, myAnswer: ask.answer, mine, address: mine ? h.address : null, riderPhone: mine ? h.riderPhone : null };
+      });
+    },
+    async answerHelp(id, answer) {
+      const m = me();
+      const h = db.help.find((x) => x.id === id);
+      const ask = h?.asks.find((a) => a.driverId === m.id);
+      need(ask, "This request was not sent to you.");
+      ask.answer = answer;
+      if (answer === "no") return "noted";
+      if (h.status === "cancelled") return "cancelled";
+      if (h.status === "covered") return h.acceptedBy === m.id ? "accepted" : "taken";
+      Object.assign(h, { status: "covered", acceptedBy: m.id, acceptedAt: now().toISOString() });
+      db.alerts.push({ id: `a${db.alerts.length + 1}`, kind: "info", sunday: h.sunday, driverId: m.id, riderId: null, resolved: false,
+        message: `${m.name} said yes: they will pick up ${h.riderName} on ${h.sunday}.`, createdAt: now().toISOString() });
+      return "accepted";
     },
     async savePlan(sunday, status, summary, assignments, waitlist) {
       need(isLeader(), "Only the transport leader can save a plan.");
@@ -168,6 +206,7 @@ export function createDemoStore({ now = () => new Date() } = {}) {
     async addRequest(riderId, sunday, { rideHome = false, note = null, extraPeople = 0, canSplit = false } = {}) {
       need(isLeader(), "Only the transport leader can do this.");
       const ex = db.requests.find((r) => r.riderId === riderId && r.sunday === sunday);
+      if (ex && ex.status === "cancelled") db.alerts.forEach((a) => { if (a.kind === "rider_cancel" && a.riderId === m.id && a.sunday === sunday) a.resolved = true; });
       if (ex) Object.assign(ex, { status: "requested", rideHome, note, extraPeople, canSplit });
       else db.requests.push({ id: `q-${riderId}-${sunday}`, riderId, sunday, rideHome, note, extraPeople, canSplit, status: "requested" });
     },

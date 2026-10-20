@@ -254,7 +254,22 @@ export function driverView(S) {
     }
     return `<article class="card"><h3>${esc(fmtDate(sunday, { weekday: "long", month: "long", day: "numeric" }))}</h3>${body}</article>`;
   }).join("");
-  return `<section><h2>Hi ${esc(firstName(me.name))}</h2>${status}
+  // Last-minute requests from the leader: answer Yes or No. Address only once the ride is yours.
+  const helpCards = (S.helpAsks || []).map((h) => {
+    const when = esc(fmtDate(h.sunday, { weekday: "long", month: "long", day: "numeric" }));
+    if (h.mine) return `<article class="card ok-card"><h3>Last-minute pickup: ${esc(h.riderName)}</h3>
+      <p>${when}, around <strong>${esc(fmtMin(h.pickupMin))}</strong>${h.seats > 1 ? ` · ${esc(h.seats)} people` : ""}</p>
+      <p><strong>${esc(h.address || "")}</strong>${h.neighbourhood ? ` <span class="muted">· ${esc(h.neighbourhood)}</span>` : ""}${h.riderPhone ? `<br>${telLink(h.riderPhone)}` : ""}</p>
+      <p class="small muted">Thank you for helping! Fit this in on your way to church.</p></article>`;
+    if (h.status === "covered") return `<article class="card soft"><p><strong>${esc(h.riderName)}'s ride on ${when} has been covered.</strong> Thank you for being ready to help.</p></article>`;
+    if (h.myAnswer === "no") return `<article class="card soft"><p>You said you can't pick up ${esc(h.riderName)} on ${when}. Thanks for letting us know. ${btn("Actually, I can", "help-answer", { id: h.id, answer: "yes" }, "link")}</p></article>`;
+    return `<article class="card warn"><h3>Can you help? Last-minute ride request</h3>
+      <p><strong>${esc(h.riderName)}</strong>${h.neighbourhood ? ` in ${esc(h.neighbourhood)}` : ""} needs a ride to church on ${when}${h.seats > 1 ? ` (${esc(h.seats)} people)` : ""}.
+      You're about <strong>${esc(h.awayMin)} minutes</strong> from them. Pickup around <strong>${esc(fmtMin(h.pickupMin))}</strong>.</p>
+      <div class="row wrap">${btn("Yes, I can", "help-answer", { id: h.id, answer: "yes" }, "primary")}${btn("No, sorry", "help-answer", { id: h.id, answer: "no" })}</div>
+      <p class="small muted">If you're the first to say yes, you'll see the address here.</p></article>`;
+  }).join("");
+  return `<section><h2>Hi ${esc(firstName(me.name))}</h2>${status}${helpCards}
     ${!isConfirmed(me) ? banner("warn", `<strong>Please confirm your home address.</strong> You won't be given riders until it's confirmed on the map, because pickup times are worked out from it. ${btn("Confirm my address", "tab", { tab: "details" }, "primary")}`) : ""}
     <p class="small muted">${esc(me.seats)} seat(s)${me.secondTrip ? " · second trip OK" : ""}${me.vehicle ? ` · ${esc(me.vehicle)}` : ""}. Change in My details.</p>${cards}${consentBlock(S)}</section>`;
 }
@@ -418,10 +433,12 @@ function alertsTab(S) {
     if (a.kind === "rider_cancel") {
       const r = people.get(a.riderId);
       const seat = plan?.assignments.find((x) => x.riderId === a.riderId);
-      const d = seat ? people.get(seat.driverId) : null;
-      const left = seat ? plan.assignments.filter((x) => x.driverId === seat.driverId && x.riderId !== a.riderId).length : 0;
+      const did = seat?.driverId || a.driverId;
+      const d = did ? people.get(did) : null;
+      const left = d ? (plan?.assignments || []).filter((x) => x.driverId === did && x.riderId !== a.riderId).length : 0;
+      const pickup = seat?.pickupMin != null ? ` (pickup ${esc(fmtMin(seat.pickupMin))})` : ((a.message.match(/\(pickup ([^)]+)\)/) || [])[1] ? ` (pickup ${esc(a.message.match(/\(pickup ([^)]+)\)/)[1])})` : "");
       body = `<p><strong>${esc(r?.name || "A rider")} cancelled their ride for ${esc(day)}.</strong></p>` + (d
-        ? `<p>They were in <strong>${esc(d.name)}</strong>'s car (pickup ${esc(fmtMin(seat.pickupMin))}), so ${esc(firstName(d.name))} now has a free seat${left ? "" : " and no one else to pick up"}.</p>
+        ? `<p>They were in <strong>${esc(d.name)}</strong>'s car${pickup}, so ${esc(firstName(d.name))} now has a free seat${left ? "" : " and no one else to pick up"}. They've been taken out of the plan; if they ask again, they'll need your approval.</p>
            <p class="small"><strong>What to do:</strong> 1) Update the plan, so ${esc(firstName(d.name))}'s pickup list and leave time are right, then approve it. 2) Let ${esc(firstName(d.name))} know.</p>`
         : `<p class="small">They're no longer in the plan, so nothing else needs to change.</p>`);
       if (!a.resolved && d) {
@@ -466,8 +483,14 @@ function textsTab(S) {
     // Messages are written fresh from the approved plan each time (nothing is stored), and
     // anyone who has cancelled since is left out straight away.
     const cancelled = new Set(S.data.requests.filter((q) => q.sunday === sunday && q.status === "cancelled").map((q) => q.riderId));
-    const gone = plan.assignments.filter((a) => cancelled.has(a.riderId));
     const asg = plan.assignments.filter((a) => !cancelled.has(a.riderId));
+    // Cancellations: riders still in the saved plan (older plans), plus those the database took out (alerts).
+    const cancelAlerts = (S.data.alerts || []).filter((a) => a.kind === "rider_cancel" && a.sunday === sunday && a.driverId);
+    const gone = [...plan.assignments.filter((a) => cancelled.has(a.riderId)),
+      ...cancelAlerts.filter((a) => cancelled.has(a.riderId) && !plan.assignments.some((x) => x.riderId === a.riderId)).map((a) => ({ riderId: a.riderId, driverId: a.driverId }))]
+      .filter((g, i, all) => all.findIndex((x) => x.riderId === g.riderId) === i);
+    // Cancelled, then asked again and approved back in: the driver gets an apology for the back-and-forth.
+    const rebooked = new Set(cancelAlerts.filter((a) => !cancelled.has(a.riderId) && asg.some((x) => x.riderId === a.riderId)).map((a) => a.riderId));
     if (gone.length) {
       html += banner("warn", `<strong>${esc(gone.map((a) => people.get(a.riderId)?.name || "A rider").join(", "))} cancelled after this plan was approved.</strong> Their messages are taken out below, and their driver has a cancellation message to send. The other times still come from the approved plan: open the Plan tab and tap <strong>Approve & share</strong> on the updated plan so leave times are right.`);
     }
@@ -488,7 +511,8 @@ function textsTab(S) {
     const cars = groupCars(asg, S.data.profiles);
     for (const did of [...new Set(cars.map((c) => c.driverId))]) {
       const d = people.get(did);
-      html += copyBlock(d.name, T.driverRoute(sunday, d, cars.filter((c) => c.driverId === did), people, new Map(S.data.requests.filter((q) => q.sunday === sunday).map((q) => [q.riderId, (q.extraPeople || 0) + 1]))), (d.phone || "no phone on file") + ". Send to this driver only. It has addresses and phone numbers.");
+      const back = asg.filter((a) => a.driverId === did && rebooked.has(a.riderId)).map((a) => firstName(people.get(a.riderId)?.name));
+      html += copyBlock(d.name, T.driverRoute(sunday, d, cars.filter((c) => c.driverId === did), people, new Map(S.data.requests.filter((q) => q.sunday === sunday).map((q) => [q.riderId, (q.extraPeople || 0) + 1])), { rebooked: back }), (d.phone || "no phone on file") + ". Send to this driver only. It has addresses and phone numbers.");
     }
     for (const w of plan.waitlist) {
       const r = people.get(w.riderId);
@@ -529,6 +553,8 @@ export function roleView(S) {
 
 function lastMinuteCard(S) {
   const sunday = S.sunday;
+  const people = ridersMap(S);
+  const url = S.appUrl || "";
   const form = `<form data-form="help" class="stack">
       <label class="field"><span>Rider's name</span><input name="helpName" required value="${esc(S.help?.newRider?.name || "")}" placeholder="e.g. Jo"></label>
       <div class="field addr">
@@ -538,34 +564,58 @@ function lastMinuteCard(S) {
         <p class="small muted addr-status" aria-live="polite">Pick the address from the list. It's checked to the house number, like everyone else's.</p>
         <input type="hidden" name="pickedAddress" value=""><input type="hidden" name="pickedLat" value=""><input type="hidden" name="pickedLng" value="">
       </div>
+      <label class="field"><span>Their phone <span class="small muted">(optional; only the driver who says yes sees it)</span></span><input name="helpPhone" type="tel" inputmode="tel" value="${esc(S.help?.newRider?.phone || "")}" placeholder="306-555-0142"></label>
       <label class="field"><span>Seats needed (the rider plus anyone with them)</span><input name="helpSeats" type="number" min="1" max="10" value="${esc(S.help?.seats || 1)}"></label>
       <button class="btn primary" type="submit">Find the closest drivers</button>
     </form>`;
 
+  // Step 2: choose who to ask, then send it to their dashboards.
   let results = "";
   const h = S.help;
   if (h?.result && h.sunday === sunday) {
     const r = h.result;
-    const rows = r.list.map((x) => {
+    const rows = r.list.map((x, i) => {
       const d = x.driver;
       const status = x.driving
         ? badge(x.fits ? `Driving this Sunday · ${x.freeSeats} free seat${x.freeSeats === 1 ? "" : "s"}` : "Driving this Sunday · car full", x.fits ? "ok" : "muted")
         : badge("Not down to drive this Sunday", "muted");
-      const msg = T.lastMinuteAsk(sunday, d, h.name, h.neighbourhood, h.seats, x.awayMin, r.pickupMin);
-      const put = x.driving && x.fits && h.riderId
-        ? btn(`Put ${firstName(h.name)} in ${firstName(d.name)}'s car`, "help-assign", { rider: h.riderId, driver: d.id, seats: h.seats }, "primary") : "";
-      return `<li class="helper"><div><strong>${esc(d.name)}</strong> ${status}<br>
-        <span class="small">About <strong>${esc(x.awayMin)} min</strong> from ${esc(firstName(h.name))} · ${esc(x.detourMin)} min out of their way from home${d.phone ? ` · ${telLink(d.phone)}` : ""}</span>
-        <pre class="msg">${esc(msg)}</pre><div class="row wrap">${btn("Copy message", "copy", { text: msg })}${put}</div></div></li>`;
+      return `<li class="helper"><label class="check"><input type="checkbox" name="askDriver" value="${esc(d.id)}" ${i < 3 && x.fits ? "checked" : ""}>
+        <span><strong>${esc(d.name)}</strong> ${status}<br>
+        <span class="small">About <strong>${esc(x.awayMin)} min</strong> from ${esc(firstName(h.name))} · ${esc(x.detourMin)} min out of their way from home${d.phone ? ` · ${esc(d.phone)}` : ""}</span></span></label></li>`;
     }).join("");
     results = `<h4>Closest drivers for ${esc(h.name)}${h.neighbourhood ? ` (${esc(h.neighbourhood)})` : ""}</h4>
-      <p class="small muted">Suggested pickup around <strong>${esc(fmtMin(r.pickupMin))}</strong> to reach church on time. Only cleared drivers with a confirmed address are listed, closest first, with those already driving this Sunday at the top. Each message gives the neighbourhood only; send the address once they say yes.</p>
+      <p class="small muted">Suggested pickup around <strong>${esc(fmtMin(r.pickupMin))}</strong> to reach church on time. Only cleared drivers with a confirmed address are listed, closest first, with those already driving this Sunday at the top. The three closest with room are ticked.</p>
       ${r.travelNote ? banner("warn", esc(r.travelNote)) : ""}
-      ${rows ? `<ol class="plain helpers">${rows}</ol>` : `<p class="muted">No cleared drivers with a confirmed address yet.</p>`}
-      <p class="small">Once a driver says yes, send them the address. If ${esc(firstName(h.name))} isn't registered yet, add them under <strong>People</strong> (Add a rider who phoned in) so the ride appears in the plan.</p>
+      ${rows ? `<form data-form="help-ask" class="stack"><ol class="plain helpers">${rows}</ol>
+        <button class="btn primary" type="submit">Ask the ticked drivers in the app</button>
+        <p class="small muted">They'll see it on their dashboard and tap Yes or No. The first yes gets the ride, and only that driver sees the address${h.phone ? " and phone number" : ""}.</p></form>`
+        : `<p class="muted">No cleared drivers with a confirmed address yet.</p>`}
       ${copyBlock("Or ask the whole group", T.lastMinuteBroadcast(sunday, firstName(h.name), h.neighbourhood, h.seats), "For the drivers' group chat. No address or phone number.")}`;
   }
+
+  // Requests already sent, with each driver's answer.
+  const reqs = (S.data.helpRequests || []).filter((x) => x.sunday === sunday && x.status !== "cancelled");
+  const answerBadge = (a) => (a === "yes" ? badge("Yes", "ok") : a === "no" ? badge("No", "muted") : badge("No reply yet", "gold"));
+  const sent = reqs.map((x) => {
+    const winner = x.acceptedBy ? people.get(x.acceptedBy) : null;
+    const head = `<strong>${esc(x.riderName)}</strong>${x.neighbourhood ? ` · ${esc(x.neighbourhood)}` : ""} · pickup around ${esc(fmtMin(x.pickupMin))}${x.seats > 1 ? ` · ${esc(x.seats)} seats` : ""}`;
+    const state = winner ? badge(`Covered by ${firstName(winner.name)}`, "ok") : badge("Waiting for a yes", "gold");
+    const asks = x.asks.map((a) => {
+      const d = people.get(a.driverId);
+      if (!d) return "";
+      const nudge = !winner && !a.answer ? `<details><summary class="small">Text to ${esc(firstName(d.name))}</summary><pre class="msg">${esc(T.helpAskText(sunday, d, x.riderName, x.neighbourhood, x.seats, a.awayMin, x.pickupMin, url))}</pre>${btn("Copy", "copy", { text: T.helpAskText(sunday, d, x.riderName, x.neighbourhood, x.seats, a.awayMin, x.pickupMin, url) })}</details>` : "";
+      return `<li><div class="row wrap"><span>${esc(d.name)}</span>${answerBadge(a.answer)}${a.driverId === x.acceptedBy ? badge("Has the ride", "ok") : ""}</div>${nudge}</li>`;
+    }).join("");
+    const confirmMsg = winner ? T.helpConfirmText(sunday, winner, x) : "";
+    return `<article class="card ${winner ? "soft" : "warn"}"><div class="row wrap">${head} ${state}</div>
+      <ul class="plain asks">${asks}</ul>
+      ${winner ? `<p class="small">${esc(firstName(winner.name))} can see the address${x.riderPhone ? " and phone number" : ""} in the app. If ${esc(firstName(x.riderName))} needs to be in a plan, add them under <strong>People</strong>.</p>
+        <details><summary class="small">Thank-you text to ${esc(firstName(winner.name))} (with the address)</summary><pre class="msg">${esc(confirmMsg)}</pre>${btn("Copy", "copy", { text: confirmMsg })}</details>` : ""}
+      <div class="row wrap">${btn("Cancel this request", "help-cancel", { id: x.id }, "link")}</div></article>`;
+  }).join("");
+
   return `<article class="card"><strong>Last-minute: find a driver</strong>
-    <p class="small muted">For someone who still needs a ride. The app finds the cleared drivers closest to them, using the same address check and road times as the plan.</p>
+    <p class="small muted">For someone who still needs a ride. The app finds the cleared drivers closest to them, using the same address check and road times as the plan, then asks them in the app.</p>
+    ${sent ? `<h4>Requests sent (${reqs.length})</h4>${sent}<h4>New request</h4>` : ""}
     ${form}${results}</article>`;
 }
