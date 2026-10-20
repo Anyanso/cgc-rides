@@ -27,10 +27,15 @@ export function profileToRow(p) {
   return out;
 }
 
-/** An explicit choice for that Sunday wins; otherwise "every week" drivers are available. */
-export function driverAvailable(driver, weeks, sunday) {
-  const w = weeks.find((x) => x.driverId === driver.id && x.sunday === sunday);
-  return w ? !!w.available : !!driver.drivesEveryWeek;
+/**
+ * An explicit choice for that day wins. Otherwise "every week" drivers are counted in for Sundays
+ * only: for a special service on another day (e.g. Christmas Eve) they are asked, never assumed.
+ */
+export function driverAvailable(driver, weeks, day) {
+  const w = weeks.find((x) => x.driverId === driver.id && x.sunday === day);
+  if (w) return !!w.available;
+  const [y, m, d] = String(day).split("-").map(Number);
+  return new Date(y, m - 1, d, 12).getDay() === 0 && !!driver.drivesEveryWeek;
 }
 
 /** A driver is a driver by role, or a leader who has set themselves up to drive too. */

@@ -4,11 +4,12 @@
 
 import { CONFIG } from "./config.js";
 import { fmtDate, fmtMin, toMin } from "./dates.js";
+import { serviceFor, timeLabel, dayLabel, cutoffLabel } from "./services.js";
 
 const first = (name = "") => String(name).trim().split(/\s+/)[0] || "friend";
 const church = () => CONFIG.churchName;
-const service = () => CONFIG.service.time;
-const svcLabel = () => fmtMin(toMin(service()));
+/** Start time of the service on that day ("11:45 AM", or "10:00 AM" for a joint service). */
+const svcLabel = (day) => (day ? timeLabel(day) : fmtMin(toMin(CONFIG.service.time)));
 
 /** Invitation for people with a car to join the driving team. Safe for a group chat (no personal details). */
 export function inviteDrivers(appUrl = "") {
@@ -34,21 +35,23 @@ Thank you for having a heart to serve. We can't wait to have you on the team!`;
 }
 
 export function weeklyCheckin(sunday, appUrl = "") {
-  return `Good day from ${church()}. Do you need a ride this Sunday (${fmtDate(sunday)})? Please tell us in the app by Saturday 12:00 noon, and how many people are coming with you${appUrl ? `: ${appUrl}` : ""}. If we don't hear from you, we won't arrange a ride.`;
+  const sv = serviceFor(sunday);
+  const which = sv.differs && sv.title !== "Sunday service" ? `to the ${sv.title} (${dayLabel(sunday).replace(`${sv.title}, `, "")}, ${svcLabel(sunday)})` : `this Sunday (${dayLabel(sunday)})`;
+  return `Good day from ${church()}. Do you need a ride ${which}? Please tell us in the app by ${cutoffLabel(sunday)}, and how many people are coming with you${appUrl ? `: ${appUrl}` : ""}. If we don't hear from you, we won't arrange a ride.`;
 }
 
 export function riderDetails(sunday, rider, driver, stop, partyTotal = 1) {
   const who = partyTotal > 1 && (stop.seats ?? 1) < partyTotal ? `${stop.seats} of your group of ${partyTotal}` : partyTotal > 1 ? `your group of ${partyTotal}` : "you";
-  return `Hi ${first(rider.name)}, your ride for ${fmtDate(sunday)} is arranged. ${first(driver.name)}${driver.vehicle ? ` (${driver.vehicle})` : ""} will pick up ${who} around ${fmtMin(stop.pickupMin)}. Please be ready by ${fmtMin(stop.readyByMin)} to avoid delays.${driver.phone ? ` Driver's number: ${driver.phone}.` : ""} Service is at ${svcLabel()}.`;
+  return `Hi ${first(rider.name)}, your ride for ${dayLabel(sunday)} is arranged. ${first(driver.name)}${driver.vehicle ? ` (${driver.vehicle})` : ""} will pick up ${who} around ${fmtMin(stop.pickupMin)}. Please be ready by ${fmtMin(stop.readyByMin)} to avoid delays.${driver.phone ? ` Driver's number: ${driver.phone}.` : ""} Service is at ${svcLabel(sunday)}.`;
 }
 
 export function waitlisted(sunday, rider) {
-  return `Hi ${first(rider.name)}, we're still working on a seat for you on ${fmtDate(sunday)}. The transport leader will message you as soon as we have one. Thank you for your patience.`;
+  return `Hi ${first(rider.name)}, we're still working on a seat for you on ${dayLabel(sunday)}. The transport leader will message you as soon as we have one. Thank you for your patience.`;
 }
 
 export function driverRoute(sunday, driver, cars, ridersById, groupSizes = new Map(), { rebooked = [] } = {}) {
   const details = CONFIG.texts?.includeDetails !== false;
-  const lines = [`Hi ${first(driver.name)}, thank you for driving on ${fmtDate(sunday)}.`];
+  const lines = [`Hi ${first(driver.name)}, thank you for driving on ${dayLabel(sunday)}.`];
   if (rebooked.length) {
     const who = rebooked.length === 1 ? rebooked[0] : `${rebooked.slice(0, -1).join(", ")} and ${rebooked.at(-1)}`;
     lines.push(`Sorry for the back-and-forth: ${who} ${rebooked.length === 1 ? "is" : "are"} coming after all, so ${rebooked.length === 1 ? "they're" : "they're all"} back on your list.`);
@@ -60,7 +63,7 @@ export function driverRoute(sunday, driver, cars, ridersById, groupSizes = new M
     const leave = car.stops[0]?.departMin, arrive = car.stops[0]?.arriveMin;
     const from = car.trip > 1 ? "church" : "home";
     return leave != null
-      ? `Please leave ${from} by ${fmtMin(leave)}${arrive != null ? ` to reach church by ${fmtMin(arrive)}` : ""} (service is at ${svcLabel()}).`
+      ? `Please leave ${from} by ${fmtMin(leave)}${arrive != null ? ` to reach church by ${fmtMin(arrive)}` : ""} (service is at ${svcLabel(sunday)}).`
       : `Please leave ${from} in good time to reach your first pickup by ${fmtMin(car.stops[0]?.pickupMin)}${arrive != null ? ` and church by ${fmtMin(arrive)}` : ""}.`;
   };
   if (cars.length === 1) lines.push(leaveLine(cars[0]));
@@ -88,37 +91,62 @@ export function driverRoute(sunday, driver, cars, ridersById, groupSizes = new M
 }
 
 export function reminder(sunday) {
-  return `Reminder from ${church()}: tomorrow's service is at ${svcLabel()}. If you have a ride, please be ready by the time in your pickup message to avoid delays. If you can't make it, tell us in the app or message the transport leader.`;
+  const sv = serviceFor(sunday);
+  return `Reminder from ${church()}: tomorrow's ${sv.differs && sv.title !== "Sunday service" ? sv.title : "service"} is at ${svcLabel(sunday)}. If you have a ride, please be ready by the time in your pickup message to avoid delays. If you can't make it, tell us in the app or message the transport leader.`;
 }
 
 export function driverCancelled(sunday, rider, newDriver, stop) {
   return newDriver
-    ? `Hi ${first(rider.name)}, there's a change to your ride on ${fmtDate(sunday)}. ${first(newDriver.name)} will now pick you up around ${fmtMin(stop.pickupMin)}. Please be ready by ${fmtMin(stop.readyByMin)}. Sorry for the change.`
-    : `Hi ${first(rider.name)}, your driver can't make it on ${fmtDate(sunday)} and we're looking for another ride for you. We'll message you shortly.`;
+    ? `Hi ${first(rider.name)}, there's a change to your ride on ${dayLabel(sunday)}. ${first(newDriver.name)} will now pick you up around ${fmtMin(stop.pickupMin)}. Please be ready by ${fmtMin(stop.readyByMin)}. Sorry for the change.`
+    : `Hi ${first(rider.name)}, your driver can't make it on ${dayLabel(sunday)} and we're looking for another ride for you. We'll message you shortly.`;
 }
 
 export function lastMinuteBroadcast(sunday, riderFirstName, neighbourhood, seatsNeeded = 1) {
-  return `Last-minute help needed (${fmtDate(sunday)}): ${riderFirstName}${neighbourhood ? ` in ${neighbourhood}` : ""} needs a ride to church. Can anyone with ${seatsNeeded} free seat pick them up? Please reply to the transport leader.`;
+  return `Last-minute help needed (${dayLabel(sunday)}): ${riderFirstName}${neighbourhood ? ` in ${neighbourhood}` : ""} needs a ride to church. Can anyone with ${seatsNeeded} free seat pick them up? Please reply to the transport leader.`;
 }
 
 /** One-to-one ask to a driver. Neighbourhood only: the full address is shared once they say yes. */
 export function lastMinuteAsk(sunday, driver, riderName, neighbourhood, seats, awayMin, pickupMin) {
-  return `Hi ${first(driver.name)}, a last-minute ride request for ${fmtDate(sunday)}: ${first(riderName)}${neighbourhood ? ` in ${neighbourhood}` : ""} needs a ride to church${seats > 1 ? ` (${seats} people)` : ""}. You're about ${awayMin} minutes from them. Could you pick them up around ${fmtMin(pickupMin)}? Please reply YES or NO, and I'll send you the address and details.`;
+  return `Hi ${first(driver.name)}, a last-minute ride request for ${dayLabel(sunday)}: ${first(riderName)}${neighbourhood ? ` in ${neighbourhood}` : ""} needs a ride to church${seats > 1 ? ` (${seats} people)` : ""}. You're about ${awayMin} minutes from them. Could you pick them up around ${fmtMin(pickupMin)}? Please reply YES or NO, and I'll send you the address and details.`;
 }
 
 /** To the driver when one of their riders cancels. */
 export function riderCancelledToDriver(sunday, driver, rider, othersLeft) {
-  return `Hi ${first(driver.name)}, ${first(rider?.name)} has cancelled their ride for ${fmtDate(sunday)}, so you don't need to pick them up. ${othersLeft
+  return `Hi ${first(driver.name)}, ${first(rider?.name)} has cancelled their ride for ${dayLabel(sunday)}, so you don't need to pick them up. ${othersLeft
     ? "I'll send your updated pickup list and leave time shortly."
     : "You have no pickups now. Thank you for being ready to help!"}`;
 }
 
 /** Short nudge with the link: the driver answers Yes or No in the app (address shared there only if they get the ride). */
 export function helpAskText(sunday, driver, riderName, neighbourhood, seats, awayMin, pickupMin, appUrl = "") {
-  return `Hi ${first(driver.name)}, a last-minute ride request for ${fmtDate(sunday)}: ${first(riderName)}${neighbourhood ? ` in ${neighbourhood}` : ""} needs a ride to church${seats > 1 ? ` (${seats} people)` : ""}, about ${awayMin} minutes from you, pickup around ${fmtMin(pickupMin)}. Can you help? Please tap Yes or No in the app: ${appUrl || "the ride app"}`;
+  return `Hi ${first(driver.name)}, a last-minute ride request for ${dayLabel(sunday)}: ${first(riderName)}${neighbourhood ? ` in ${neighbourhood}` : ""} needs a ride to church${seats > 1 ? ` (${seats} people)` : ""}, about ${awayMin} minutes from you, pickup around ${fmtMin(pickupMin)}. Can you help? Please tap Yes or No in the app: ${appUrl || "the ride app"}`;
 }
 
 /** Thank-you to the driver who said yes, with the details (they also see them in the app). */
 export function helpConfirmText(sunday, driver, h) {
-  return `Thank you, ${first(driver.name)}! You're picking up ${h.riderName} on ${fmtDate(sunday)} around ${fmtMin(h.pickupMin)} at ${h.address}${h.neighbourhood ? ` (${h.neighbourhood})` : ""}${h.riderPhone ? `. Their number: ${h.riderPhone}` : ""}. The details are in the app under My Sundays too.`;
+  return `Thank you, ${first(driver.name)}! You're picking up ${h.riderName} on ${dayLabel(sunday)} around ${fmtMin(h.pickupMin)} at ${h.address}${h.neighbourhood ? ` (${h.neighbourhood})` : ""}${h.riderPhone ? `. Their number: ${h.riderPhone}` : ""}. The details are in the app under My Sundays too.`;
+}
+
+/**
+ * For the Chosen group chat when the leader changes a day: a joint service at another time,
+ * a Sunday with no service, or a special service. Has no personal details.
+ */
+export function serviceAnnouncement(day, appUrl = "") {
+  const sv = serviceFor(day);
+  const date = fmtDate(day, { weekday: "long", month: "long", day: "numeric" });
+  const link = appUrl ? `\n\nOpen the app: ${appUrl}` : "";
+  if (sv.cancelled) {
+    return `Announcement from ${church()}: there is no service on ${date}, so no rides will be arranged that day. If you had asked for a ride, there's nothing you need to do.${link}`;
+  }
+  const note = sv.note ? `\n${sv.note}` : "";
+  if (sv.sunday) {
+    return `Announcement from ${church()}: ${date} is a ${sv.title !== "Sunday service" ? sv.title : "service"} at ${svcLabel(day)}${sv.time !== CONFIG.service.time ? ` (not the usual ${svcLabel()})` : ""}.${note}
+
+Need a ride? Ask in the app by ${cutoffLabel(day)}. If you've already asked, your pickup time will be worked out for the new time; you'll see it on Saturday evening.
+Drivers: please check you're still free for it in the app.${link}`;
+  }
+  return `Announcement from ${church()}: ${sv.title} on ${date} at ${svcLabel(day)}.${note}
+
+Need a ride? Open the app and tap "I need a ride" for the ${sv.title} by ${cutoffLabel(day)}.
+Drivers: if you can give rides for it, please say so in the app. We'll only plan you in if you do.${link}`;
 }

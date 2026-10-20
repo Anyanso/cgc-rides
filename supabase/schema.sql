@@ -75,7 +75,7 @@ create table if not exists driver_weeks (
 create table if not exists ride_requests (
   id         uuid primary key default gen_random_uuid(),
   rider_id   uuid not null references profiles (id) on delete cascade,
-  sunday     date not null check (extract(dow from sunday) = 0),
+  sunday     date not null,                 -- the service date (any day; normally a Sunday)
   ride_home  boolean not null default false,
   extra_people int not null default 0 check (extra_people between 0 and 10),  -- people coming with the rider; each needs a seat
   can_split  boolean not null default false,   -- OK to seat the group in different cars if no single car fits
@@ -87,7 +87,7 @@ create table if not exists ride_requests (
 
 create table if not exists plans (
   id          uuid primary key default gen_random_uuid(),
-  sunday      date not null unique check (extract(dow from sunday) = 0),
+  sunday      date not null unique,           -- the service date
   status      text not null default 'draft' check (status in ('draft', 'approved')),
   summary     jsonb not null default '{}'::jsonb,
   approved_at timestamptz,
@@ -159,6 +159,25 @@ create table if not exists help_asks (
   primary key (request_id, driver_id)
 );
 
+-- ---------------------------------------------------------------- services
+-- Every Sunday is a service at 11:45 by default and needs no row here. The leader adds a row to
+-- change one day (e.g. a joint service at 10:00), to mark a Sunday as having no service, or to add
+-- a special service on any day (e.g. Christmas Eve at 19:00). One service per day.
+create table if not exists services (
+  service_date      date primary key,
+  title             text,                          -- e.g. 'Joint service'; empty = 'Sunday service'
+  start_time        time not null default '11:45',
+  arrive_before_min int  not null default 15 check (arrive_before_min between 0 and 90),
+  cutoff            timestamptz,                   -- when ride requests close; empty = noon the day before
+  cancelled         boolean not null default false,
+  note              text,
+  updated_at        timestamptz not null default now()
+);
+
+-- Requests and plans can now be for any service day, not only Sundays.
+alter table ride_requests drop constraint if exists ride_requests_sunday_check;
+alter table plans drop constraint if exists plans_sunday_check;
+
 create index if not exists assignments_driver_idx on assignments (driver_id);
 create index if not exists requests_sunday_idx on ride_requests (sunday);
 
@@ -223,7 +242,7 @@ create trigger protect_profile_trg before insert or update on profiles
 
 create or replace function check_request() returns trigger
 language plpgsql set search_path = public, pg_temp as $$
-declare closes timestamptz;
+declare closes timestamptz; svc services; special boolean;
 begin
   if current_user in ('postgres', 'supabase_admin', 'service_role') or is_leader() then
     return new;
@@ -233,12 +252,22 @@ begin
     new.sunday := old.sunday;
     if new.status = 'cancelled' then return new; end if;   -- a rider can always say "I can't make it"
   end if;
-  closes := ((new.sunday - 1)::timestamp + interval '12 hours') at time zone 'America/Regina';
-  if new.sunday > today_regina() + 42 then
-    raise exception 'That Sunday is too far ahead to request a ride.';
+  -- (The column is still called "sunday"; it holds the service date, which may be any day.)
+  select * into svc from services where service_date = new.sunday;
+  special := svc.service_date is not null;
+  if special and svc.cancelled then
+    raise exception 'There is no service on %. Please check the app for the next one.', to_char(new.sunday, 'FMDay, FMMonth FMDD');
   end if;
+  if not special and extract(dow from new.sunday) <> 0 then
+    raise exception 'There is no service on that day.';
+  end if;
+  if new.sunday > today_regina() + (case when special then 120 else 42 end) then
+    raise exception 'That service is too far ahead to request a ride.';
+  end if;
+  closes := coalesce(svc.cutoff, ((new.sunday - 1)::timestamp + interval '12 hours') at time zone 'America/Regina');
   if now() >= closes then
-    raise exception 'Requests for % closed on Saturday at noon. Please contact the transport leader.', new.sunday;
+    raise exception 'Requests for % closed on % at %. Please contact the transport leader.', to_char(new.sunday, 'FMDay, FMMonth FMDD'),
+      to_char(closes at time zone 'America/Regina', 'FMDay'), to_char(closes at time zone 'America/Regina', 'FMHH12:MI AM');
   end if;
   return new;
 end $$;
@@ -320,6 +349,12 @@ drop policy if exists help_requests_leader on help_requests;
 drop policy if exists help_asks_leader on help_asks;
 create policy help_requests_leader on help_requests for all using (is_leader()) with check (is_leader());
 create policy help_asks_leader     on help_asks     for all using (is_leader()) with check (is_leader());
+
+alter table services enable row level security;
+drop policy if exists services_read on services;
+drop policy if exists services_leader on services;
+create policy services_read   on services for select using (auth.uid() is not null);
+create policy services_leader on services for all using (is_leader()) with check (is_leader());
 
 -- Leader-only tables. Everyone else reaches this data only through the functions below.
 drop policy if exists plans_leader on plans;

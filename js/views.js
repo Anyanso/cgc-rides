@@ -3,7 +3,9 @@
 // and app.js listens for them. EVERY piece of user-supplied text goes through esc().
 
 import { isConfirmed } from "./geo.js";
-import { fmtDate, fmtMin, isClosed, toMin } from "./dates.js";
+import { fmtDate, fmtMin, toMin } from "./dates.js";
+import { serviceFor, isClosedFor, cutoffLabel, timeLabel, dayLabel, changedServices, isSunday, upcomingDays } from "./services.js";
+const isClosed = (day, now) => isClosedFor(day, now);
 import { driverAvailable, DRIVER_STATUS_TEXT, CONSENT_WORDING, daysLeft, isDriver } from "./models.js";
 import { driverIssue } from "./matching.js";
 import { groupCars } from "./planner.js";
@@ -159,6 +161,15 @@ export function registerView(S) {
 
 // ---------------------------------------------------------------- rider
 
+/** Card heading for a service day: "Sunday, October 25 · 11:45 AM", or "Christmas Eve service" with its date and time. */
+function dayHeading(day) {
+  const s = serviceFor(day);
+  const date = fmtDate(day, { weekday: "long", month: "long", day: "numeric" });
+  if (s.cancelled) return `<h3>${esc(date)} ${badge("No service", "muted")}</h3>`;
+  const named = s.differs && s.title !== "Sunday service";
+  return `<h3>${named ? `${esc(s.title)}<br><span class="small muted">${esc(date)}</span>` : esc(date)} <span class="badge ${s.differs ? "gold" : "muted"}">${esc(timeLabel(day))}</span></h3>${s.note ? `<p class="small">${esc(s.note)}</p>` : ""}`;
+}
+
 function consentBlock(S) {
   const me = S.me;
   if (me.textsConsentAt) {
@@ -185,9 +196,12 @@ export function riderView(S) {
     const closed = isClosed(sunday, S.now);
     const party = ride ? 1 + (ride.extraPeople || 0) : 1;
     let body;
-    if (!ride || ride.status === "cancelled") {
+    const svc = serviceFor(sunday);
+    if (svc.cancelled) {
+      body = `<p class="muted">There's no service this day, so no rides are arranged.</p>`;
+    } else if (!ride || ride.status === "cancelled") {
       body = closed
-        ? `<p class="muted">Requests for this Sunday have closed. Please contact the transport leader.</p>`
+        ? `<p class="muted">Requests for this service have closed. Please contact the transport leader.</p>`
         : `${requestForm(sunday, !!ride)}${ride ? `<p class="small muted">You cancelled this one.</p>` : ""}`;
     } else if (ride.status === "seated") {
       body = rows.map((r) => `<div class="driver">
@@ -202,9 +216,9 @@ export function riderView(S) {
     } else if (ride.status === "waitlisted") {
       body = `<p>We're still working on ${party > 1 ? "seats for your group" : "a seat for you"}. The transport leader will message you as soon as we have ${party > 1 ? "them" : "one"}.</p>${btn("I can't make it", "cancel-ride", { sunday }, "danger")}`;
     } else {
-      body = `<p>${badge("Requested", "gold")} ${party > 1 ? `For ${esc(party)} people. ` : ""}The leader will confirm your driver after requests close (Saturday noon).${party > 1 ? (ride.canSplit ? " You said it's OK to split across cars." : " You asked to stay together; if that isn't possible the leader will ask you.") : ""}</p>${btn("Cancel my request", "cancel-ride", { sunday }, "ghost")}`;
+      body = `<p>${badge("Requested", "gold")} ${party > 1 ? `For ${esc(party)} people. ` : ""}The leader will confirm your driver after requests close (${esc(cutoffLabel(sunday))}).${party > 1 ? (ride.canSplit ? " You said it's OK to split across cars." : " You asked to stay together; if that isn't possible the leader will ask you.") : ""}</p>${btn("Cancel my request", "cancel-ride", { sunday }, "ghost")}`;
     }
-    return `<article class="card"><h3>${esc(fmtDate(sunday, { weekday: "long", month: "long", day: "numeric" }))}</h3>${body}</article>`;
+    return `<article class="card">${dayHeading(sunday)}${body}</article>`;
   }).join("");
   return `<section><h2>Hi ${esc(firstName(me.name))}</h2>
     ${!isConfirmed(me) ? banner("warn", `<strong>Please confirm your home address.</strong> We can only arrange a ride once your address is confirmed on the map. ${btn("Confirm my address", "tab", { tab: "details" }, "primary")}`) : ""}
@@ -233,8 +247,11 @@ export function driverView(S) {
     const avail = driverAvailable(me, S.weeks, sunday);
     const route = S.routes[sunday] || [];
     const trips = [...new Set(route.map((r) => r.trip))];
-    let body = `<p>${avail ? badge("You're driving", "ok") : badge("Not driving", "muted")}
-      ${btn(avail ? "I can't drive this Sunday" : "I can drive this Sunday", "toggle-avail", { sunday, to: avail ? "no" : "yes" })}</p>`;
+    const svc = serviceFor(sunday);
+    const what = svc.sunday && !svc.differs ? "this Sunday" : "for this service";
+    let body = svc.cancelled ? `<p class="muted">There's no service this day.</p>` : `<p>${avail ? badge("You're driving", "ok") : badge(svc.special ? "Can you drive?" : "Not driving", svc.special ? "gold" : "muted")}
+      ${btn(avail ? `I can't drive ${what}` : `I can drive ${what}`, "toggle-avail", { sunday, to: avail ? "no" : "yes" }, avail ? "ghost" : (svc.special ? "primary" : "ghost"))}</p>
+      ${svc.special && !avail ? `<p class="small muted">This is a special service. Tap the button if you can give rides for it.</p>` : ""}`;
     if (route.length) {
       body += trips.map((t) => {
         const stops = route.filter((r) => r.trip === t);
@@ -249,10 +266,10 @@ export function driverView(S) {
             ${s.riderNotes ? `<br><em>${esc(s.riderNotes)}</em>` : ""}${s.requestNote ? `<br><em>${esc(s.requestNote)}</em>` : ""}</div></li>`).join("")}</ol>
           <p class="small muted">Aim to arrive at church by ${esc(fmtMin(stops[0].arriveMin))}.</p>${mapsLink(S, stops)}</div>`;
       }).join("") + `<p>${btn("I can't make it", "cant-make-it", { sunday }, "danger")}</p>`;
-    } else if (avail) {
+    } else if (avail && !svc.cancelled) {
       body += `<p class="muted">No riders confirmed yet. You'll see your pickups here once the leader approves the plan.</p>`;
     }
-    return `<article class="card"><h3>${esc(fmtDate(sunday, { weekday: "long", month: "long", day: "numeric" }))}</h3>${body}</article>`;
+    return `<article class="card">${dayHeading(sunday)}${body}</article>`;
   }).join("");
   // Last-minute requests from the leader: answer Yes or No. Address only once the ride is yours.
   const helpCards = (S.helpAsks || []).map((h) => {
@@ -308,10 +325,17 @@ function planTab(S) {
   const chips = S.sundays.map((s) => {
     const n = S.data.requests.filter((r) => r.sunday === s && r.status !== "cancelled").length;
     const st = S.data.plans[s]?.status;
-    return `<button type="button" class="chip ${s === sunday ? "on" : ""}" data-act="pick-sunday" data-sunday="${esc(s)}">${esc(fmtDate(s))}<small>${n} asking${st ? ` · ${st}` : ""}</small></button>`;
+    const sv = serviceFor(s);
+    const label = sv.cancelled ? "No service" : sv.differs && sv.title !== "Sunday service" ? `${sv.title} · ${timeLabel(s)}` : `${n} asking${st ? ` · ${st}` : ""}`;
+    return `<button type="button" class="chip ${s === sunday ? "on" : ""} ${sv.differs ? "special" : ""}" data-act="pick-sunday" data-sunday="${esc(s)}">${esc(fmtDate(s))}<small>${esc(label)}</small></button>`;
   }).join("");
 
   let html = `<div class="chips">${chips}</div>`;
+  const svcDay = serviceFor(sunday);
+  if (svcDay.cancelled) {
+    return html + banner("info", `<strong>No service on ${esc(fmtDate(sunday, { weekday: "long", month: "long", day: "numeric" }))}.</strong> Nobody can ask for a ride and no plan is made. Change this in the Services tab.`);
+  }
+  if (svcDay.differs) html += `<p class="svcline"><strong>${esc(svcDay.title)}</strong> · ${esc(fmtDate(sunday, { weekday: "long", month: "long", day: "numeric" }))} · starts ${esc(timeLabel(sunday))}</p>`;
   if (S.churchWarning) html += banner("warn", `<strong>Church location not set.</strong> ${esc(S.churchWarning)}`);
   else if (S.churchFound && S.mode !== "demo") {
     const f = S.churchFound;
@@ -320,7 +344,7 @@ function planTab(S) {
       ? `<p class="small muted">Times are worked out to the church's pinned location (${map}).</p>`
       : banner("info", `<strong>Church location:</strong> ${esc(f.address)}${f.postcode ? `, ${esc(f.postcode)}` : ""} (${map}). Pickup times are worked back from this point. If the pin isn't at the church, put the exact latitude and longitude in js/config.js.`);
   }
-  html += `<p class="small muted">Times use real road times plus a ${esc(S.config.matching.trafficPct ?? 20)}% safety margin and ${esc(S.config.matching.legBufferMin ?? 1)} min per drive, ${esc(S.config.matching.stopMin)} min at each house, arriving ${esc(S.config.service.arriveBeforeMin)} min before the service.</p>`;
+  html += `<p class="small muted">Times use real road times plus a ${esc(S.config.matching.trafficPct ?? 20)}% safety margin and ${esc(S.config.matching.legBufferMin ?? 1)} min per drive, ${esc(S.config.matching.stopMin)} min at each house, arriving ${esc(serviceFor(sunday).arriveBeforeMin)} min before the service at ${esc(timeLabel(sunday))}.</p>`;
   if (S.mode === "demo") html += banner("info", `Demo plans use a placeholder church location (${esc(S.demoChurchLabel)}).`);
   html += `<div class="tiles"><div class="tile"><b>${askingPeople}</b>people asking</div><div class="tile"><b>${seats}</b>seats offered</div>
     <div class="tile"><b>${pv?.assignments.reduce((n, a) => n + (a.seats ?? 1), 0) ?? 0}</b>${pv && pv.status === "approved" && !pv.dirty ? "seated and shared" : "in a car (not shared yet)"}</div><div class="tile"><b>${pv?.waitlist.reduce((n, w) => n + (w.seats ?? 1), 0) ?? 0}</b>waiting</div></div>`;
@@ -342,7 +366,7 @@ function planTab(S) {
 
   html += `<div class="row wrap">${status}${S.busy ? `<span class="small muted">Working…</span>` : ""}</div>
     <div class="row wrap">${open ? btn("Hide the plan", "hide-plan") : btn(pv ? "View the plan" : "Make and view the plan", "view-plan", {}, "primary")}</div>
-    <p class="small muted">Requests close Saturday at noon${isClosed(sunday, S.now) ? " (closed)" : ""}. Nothing reaches drivers and riders until you approve.</p>`;
+    <p class="small muted">Requests close ${esc(cutoffLabel(sunday))}${isClosed(sunday, S.now) ? " (closed)" : ""}. Nothing reaches drivers and riders until you approve.</p>`;
 
   if (!open) {
     if (!pv) {
@@ -379,7 +403,7 @@ function planTab(S) {
     }).join("");
   }
   if (pv.excluded?.length) {
-    html += `<details class="card soft"><summary>${pv.excluded.length} driver(s) not driving this Sunday</summary><ul class="plain">${pv.excluded.map((e) => `<li><strong>${esc(e.name)}</strong>: ${esc(e.reason)}</li>`).join("")}</ul></details>`;
+    html += `<details class="card soft"><summary>${pv.excluded.length} driver(s) not driving this day</summary><ul class="plain">${pv.excluded.map((e) => `<li><strong>${esc(e.name)}</strong>: ${esc(e.reason)}</li>`).join("")}</ul></details>`;
   }
 
   // Save draft sits beside Approve & share, under the plan. Save draft is only active after a change.
@@ -480,9 +504,17 @@ function textsTab(S) {
     <p class="small muted">Nothing is sent from here. Copy a message and paste it into the group chat or a text. Group messages never include addresses. The driver messages below do, so send each one to that driver only. Only text people who agreed to texts.</p>`;
   html += `<h3>Invitation</h3>`;
   html += copyBlock("Invite people with a car to join the driving team", T.inviteDrivers(url), "For the church group chat or one-to-one. Has no personal details. New drivers are approved by you before they get riders.");
+  const changedDays = upcomingDays(8, S.now).filter((d) => serviceFor(d).differs);
+  if (changedDays.length) {
+    html += `<h3>Service announcements</h3>`;
+    for (const d of changedDays) {
+      const sv = serviceFor(d);
+      html += copyBlock(`${sv.cancelled ? "No service" : sv.title}: ${fmtDate(d, { weekday: "short", month: "short", day: "numeric" })}`, T.serviceAnnouncement(d, url), "For the Chosen group chat. Has no personal details.");
+    }
+  }
   html += `<h3>Every week</h3>`;
   html += copyBlock("Weekly check-in (Thursday, to the group)", T.weeklyCheckin(sunday, url), "Opt-in riders only. Silence means no ride.");
-  html += copyBlock("Saturday reminder (to the group)", T.reminder(sunday));
+  html += copyBlock("Reminder the day before (to the group)", T.reminder(sunday));
   if (approved) {
     // Messages are written fresh from the approved plan each time (nothing is stored), and
     // anyone who has cancelled since is left out straight away.
@@ -535,10 +567,63 @@ function drivingTab(S) {
     <p class="small muted">Leaders can drive as well. You clear yourself, then you appear as a driver in the plan.</p>${profileForm(S, S.me, { leaderSelf: true })}</details>${drives ? driverView(S) : ""}`;
 }
 
+// ---------------------------------------------------------------- services (leader)
+
+function serviceForm(S) {
+  const editing = S.editingService;
+  const isNew = editing === "new";
+  const row = isNew ? null : (S.services || []).find((x) => x.date === editing);
+  const svc = isNew ? null : serviceFor(editing);
+  const pad = (n) => String(n).padStart(2, "0");
+  const c = row?.cutoff ? new Date(row.cutoff) : null;
+  const cDate = c ? `${c.getFullYear()}-${pad(c.getMonth() + 1)}-${pad(c.getDate())}` : "";
+  const cTime = c ? `${pad(c.getHours())}:${pad(c.getMinutes())}` : "";
+  const today = S.todayISO || "";
+  return `<form data-form="service" class="stack card">
+    <h3>${isNew ? "Add a special service" : `Change ${esc(fmtDate(editing, { weekday: "long", month: "long", day: "numeric" }))}`}</h3>
+    ${isNew ? `<label class="field"><span>Date</span><input name="date" type="date" required min="${esc(today)}"></label>`
+            : `<input type="hidden" name="date" value="${esc(editing)}">`}
+    <label class="field"><span>Name ${isNew ? "" : '<span class="small muted">(optional, e.g. Joint service)</span>'}</span><input name="title" value="${esc(row?.title || "")}" placeholder="${isNew ? "e.g. Christmas Eve service" : "e.g. Joint service"}" ${isNew ? "required" : ""}></label>
+    <div class="grid2">
+      <label class="field"><span>Service starts</span><input name="time" type="time" required value="${esc(row?.time || (isNew ? "19:00" : S.config.service.time))}"></label>
+      <label class="field"><span>Drivers arrive this many minutes before</span><input name="arriveBefore" type="number" min="0" max="90" value="${esc(row?.arriveBeforeMin ?? S.config.service.arriveBeforeMin)}"></label>
+    </div>
+    <fieldset class="field"><legend>Ride requests close <span class="small muted">(leave empty for noon the day before)</span></legend>
+      <div class="grid2"><input name="cutoffDate" type="date" value="${esc(cDate)}" aria-label="Cutoff date"><input name="cutoffTime" type="time" value="${esc(cTime)}" aria-label="Cutoff time"></div>
+    </fieldset>
+    <label class="field"><span>Note for everyone <span class="small muted">(optional, shown on their dashboard)</span></span><input name="note" value="${esc(row?.note || "")}" placeholder="e.g. Combined service with our sister church"></label>
+    <div class="row wrap"><button class="btn primary" type="submit">Save</button>${btn("Cancel", "service-close")}
+      ${row ? btn(svc?.sunday ? "Back to the usual Sunday" : "Remove this service", "service-reset", { date: editing }, "link") : ""}</div>
+    <p class="small muted">Pickup and leave times for this day are worked out from its start time. If a plan already exists, its times update automatically, ready for you to approve again.</p>
+  </form>`;
+}
+
+function servicesTab(S) {
+  const days = upcomingDays(8, S.now);
+  const rows = days.map((day) => {
+    const s = serviceFor(day);
+    const status = s.cancelled ? badge("No service", "muted") : !s.sunday ? badge("Special", "gold") : s.differs ? badge("Changed", "gold") : badge("Usual", "ok");
+    const what = s.cancelled ? "No service" : `${s.differs && s.title !== "Sunday service" ? `${s.title} · ` : ""}${timeLabel(day)}`;
+    const buttons = [
+      !s.cancelled && btn("Change", "service-edit", { date: day }),
+      s.sunday && !s.cancelled && btn("No service", "service-off", { date: day }, "link"),
+      s.changed && btn(s.sunday ? "Back to usual" : "Remove", "service-reset", { date: day }, "link"),
+    ].filter(Boolean).join("");
+    return `<li class="personrow"><div><strong>${esc(fmtDate(day, { weekday: "short", month: "short", day: "numeric" }))}</strong> ${status}<br><span class="small">${esc(what)}${s.customCutoff ? ` · requests close ${esc(cutoffLabel(day))}` : ""}</span></div><div class="row wrap">${buttons}</div></li>`;
+  }).join("");
+  return `<section>
+    <p class="muted">Every Sunday is a service at <strong>${esc(fmtMin(toMin(S.config.service.time)))}</strong> automatically. Change a single day (for example a joint service at 10:00), mark a Sunday as no service, or add a special service on any day. Everyone's dashboard follows straight away, and they decide whether they need a ride or can drive, as usual.</p>
+    ${S.editingService ? serviceForm(S) : `<p>${btn("Add a special service", "service-new", {}, "primary")}</p>`}
+    <h3>Next 8 weeks</h3>
+    <ul class="plain">${rows}</ul>
+    <p class="small muted">After a change, send the announcement from the Texts tab to the Chosen group chat.</p>
+  </section>`;
+}
+
 export function leaderView(S) {
   const openAlerts = S.data.alerts.filter((a) => !a.resolved).length;
-  const tabs = [["plan", "Plan"], ["people", "People"], ["alerts", `Alerts${openAlerts ? ` (${openAlerts})` : ""}`], ["texts", "Texts"], ["driving", "My driving"]];
-  const body = { plan: planTab, people: peopleTab, alerts: alertsTab, texts: textsTab, driving: drivingTab }[S.tab] || planTab;
+  const tabs = [["plan", "Plan"], ["people", "People"], ["alerts", `Alerts${openAlerts ? ` (${openAlerts})` : ""}`], ["texts", "Texts"], ["services", "Services"], ["driving", "My driving"]];
+  const body = { plan: planTab, people: peopleTab, alerts: alertsTab, texts: textsTab, services: servicesTab, driving: drivingTab }[S.tab] || planTab;
   return `<nav class="tabs">${tabs.map(([k, l]) => `<button type="button" class="${S.tab === k ? "on" : ""}" data-act="tab" data-tab="${k}">${esc(l)}</button>`).join("")}</nav>${body(S)}`;
 }
 
@@ -581,14 +666,14 @@ function lastMinuteCard(S) {
     const rows = r.list.map((x, i) => {
       const d = x.driver;
       const status = x.driving
-        ? badge(x.fits ? `Driving this Sunday · ${x.freeSeats} free seat${x.freeSeats === 1 ? "" : "s"}` : "Driving this Sunday · car full", x.fits ? "ok" : "muted")
-        : badge("Not down to drive this Sunday", "muted");
+        ? badge(x.fits ? `Driving this day · ${x.freeSeats} free seat${x.freeSeats === 1 ? "" : "s"}` : "Driving this day · car full", x.fits ? "ok" : "muted")
+        : badge("Not down to drive this day", "muted");
       return `<li class="helper"><label class="check"><input type="checkbox" name="askDriver" value="${esc(d.id)}" ${i < 3 && x.fits ? "checked" : ""}>
         <span><strong>${esc(d.name)}</strong> ${status}<br>
         <span class="small">About <strong>${esc(x.awayMin)} min</strong> from ${esc(firstName(h.name))} · ${esc(x.detourMin)} min out of their way from home${d.phone ? ` · ${esc(d.phone)}` : ""}</span></span></label></li>`;
     }).join("");
     results = `<h4>Closest drivers for ${esc(h.name)}${h.neighbourhood ? ` (${esc(h.neighbourhood)})` : ""}</h4>
-      <p class="small muted">Suggested pickup around <strong>${esc(fmtMin(r.pickupMin))}</strong> to reach church on time. Only cleared drivers with a confirmed address are listed, closest first, with those already driving this Sunday at the top. The three closest with room are ticked.</p>
+      <p class="small muted">Suggested pickup around <strong>${esc(fmtMin(r.pickupMin))}</strong> to reach church on time. Only cleared drivers with a confirmed address are listed, closest first, with those already driving that day at the top. The three closest with room are ticked.</p>
       ${r.travelNote ? banner("warn", esc(r.travelNote)) : ""}
       ${rows ? `<form data-form="help-ask" class="stack"><ol class="plain helpers">${rows}</ol>
         <button class="btn primary" type="submit">Ask the ticked drivers in the app</button>

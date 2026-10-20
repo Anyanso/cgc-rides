@@ -4,13 +4,15 @@
 import { CONFIG, IS_DEMO } from "./config.js";
 import { createDemoStore } from "./store-demo.js";
 import { peopleCsv, backupJson, stamp, download } from "./backup.js";
-import { toISO, fmtDate } from "./dates.js";
+import { toISO, fmtDate, fmtMin, toMin } from "./dates.js";
+const fmtMinLabel = (hhmm) => fmtMin(toMin(hhmm));
 import { confirmAddress, suggestAddresses, refineSuggestions, normalizePhone, normalizePostal, isConfirmed } from "./geo.js";
 import { driverIssue } from "./matching.js";
 import { draftPlan, recompute, applyMove, reassignDriver, sundayPeople, rankHelpers } from "./planner.js";
 import { driverAvailable, CONSENT_WORDING, isDriver } from "./models.js";
 import { shell, landingView, signInView, demoPickerView, roleView, esc } from "./views.js";
 import { lastMinuteBroadcast } from "./texts.js";
+import { setServices, upcomingDays, configFor, serviceFor } from "./services.js";
 import { DEMO_CHURCH } from "./demo-data.js";
 
 const root = document.getElementById("app");
@@ -21,7 +23,7 @@ const S = {
   screen: "landing", session: null, me: null, tab: null,
   sundays: [], sunday: null, rides: [], weeks: [], routes: {},
   data: null, planView: null, planOpen: false, church: null, churchWarning: null, churchFound: null, formDraft: null,
-  editing: null, busy: false, toast: "", error: "", signInSent: "", regRole: null, broadcast: "", help: null, helpAsks: [],
+  editing: null, busy: false, toast: "", error: "", signInSent: "", regRole: null, broadcast: "", help: null, helpAsks: [], services: [], editingService: null,
   now: new Date(), todayISO: "", demoPeople: null, appUrl: "", demoChurchLabel: DEMO_CHURCH.label,
 };
 
@@ -89,7 +91,7 @@ function excludedFor(sunday) {
 
 function planViewFromSaved() {
   const saved = S.data.plans[S.sunday];
-  S.planView = saved ? { status: saved.status, assignments: saved.assignments, waitlist: saved.waitlist, trips: null, warnings: [], excluded: excludedFor(S.sunday), dirty: false, travelNote: "", travelSource: saved.summary?.travelSource } : null;
+  S.planView = saved ? { status: saved.status, assignments: saved.assignments, waitlist: saved.waitlist, trips: null, warnings: [], excluded: excludedFor(S.sunday), dirty: false, travelNote: "", travelSource: saved.summary?.travelSource, madeFor: { time: saved.summary?.serviceTime || CONFIG.service.time, arrive: saved.summary?.arriveBeforeMin ?? CONFIG.service.arriveBeforeMin } } : null;
 }
 
 /**
@@ -103,6 +105,18 @@ async function autoUpdatePlan() {
   if (!S.data || !S.sunday || !S.church) return;
   const pv = S.planView;
   if (pv?.edited) return; // the leader is changing it by hand: leave it alone
+  const svc = serviceFor(S.sunday);
+  if (svc.cancelled) return; // no service that day
+  if (pv && pv.madeFor && (pv.madeFor.time !== svc.time || pv.madeFor.arrive !== svc.arriveBeforeMin)) {
+    // The leader changed the service time after this plan was made: same cars, new times.
+    try {
+      const res = await recompute({ data: S.data, sunday: S.sunday, church: S.church, config: configFor(S.sunday), assignments: pv.assignments, waitlist: pv.waitlist });
+      S.planView = { ...pv, assignments: res.assignments, waitlist: res.waitlist, trips: res.trips, warnings: res.warnings, dirty: true, edited: false,
+        travelNote: res.travelNote, travelSource: res.travelSource, madeFor: { time: svc.time, arrive: svc.arriveBeforeMin },
+        autoNote: `Times updated for the new service time (${fmtMinLabel(svc.time)}). Same cars and riders.` };
+    } catch (err) { console.error(err); }
+    return;
+  }
   const asking = S.data.requests.filter((r) => r.sunday === S.sunday && r.status !== "cancelled");
   const askingIds = new Set(asking.map((r) => r.riderId));
   const name = (id) => S.data.profiles.find((p) => p.id === id)?.name || "a rider";
@@ -130,20 +144,23 @@ async function autoUpdatePlan() {
     note = note[0].toUpperCase() + note.slice(1);
   }
   try {
-    const res = await draftPlan({ data: S.data, sunday: S.sunday, church: S.church, config: CONFIG, keep });
+    const res = await draftPlan({ data: S.data, sunday: S.sunday, church: S.church, config: configFor(S.sunday), keep });
     adoptResult(res, pv?.status || "draft", { auto: true });
     S.planView.autoNote = note;
+    S.planView.madeFor = { time: svc.time, arrive: svc.arriveBeforeMin };
   } catch (err) { console.error(err); }
 }
 
 async function load() {
-  S.sundays = store.sundays();
+  S.services = await store.services();
+  setServices(S.services);
+  S.sundays = upcomingDays(CONFIG.weeksAhead, new Date());
   S.me = await store.getMe();
   S.appUrl = location.href.split("#")[0].split("?")[0];
   if (!S.me) return;
   await resolveChurch();
   const defaults = { leader: "plan", driver: "sundays", rider: "rides" };
-  if (!S.tab || (S.me.role === "leader" && !["plan", "people", "alerts", "texts", "driving"].includes(S.tab)) ||
+  if (!S.tab || (S.me.role === "leader" && !["plan", "people", "alerts", "texts", "services", "driving"].includes(S.tab)) ||
       (S.me.role === "driver" && !["sundays", "details"].includes(S.tab)) || (S.me.role === "rider" && !["rides", "details"].includes(S.tab))) S.tab = defaults[S.me.role];
   if (S.me.role === "rider") S.rides = await store.myRides();
   if (S.me.role === "driver" || S.me.role === "leader") S.helpAsks = await store.myHelpRequests();
@@ -229,7 +246,10 @@ async function checkProfile(raw, previous = {}, { strict }) {
 
 // ---------------------------------------------------------------- plan helpers
 
-function planSummary() { return { travelSource: S.planView.travelSource || null, travelNote: S.planView.travelNote || "", savedFrom: "app" }; }
+function planSummary() {
+  const c = configFor(S.sunday);
+  return { travelSource: S.planView.travelSource || null, travelNote: S.planView.travelNote || "", savedFrom: "app", serviceTime: c.service.time, arriveBeforeMin: c.service.arriveBeforeMin };
+}
 
 async function persistPlan(status) {
   const pv = S.planView;
@@ -239,7 +259,8 @@ async function persistPlan(status) {
 }
 
 function adoptResult(res, status, { auto = false } = {}) {
-  S.planView = { edited: !auto, status, assignments: res.assignments, waitlist: res.waitlist, trips: res.trips, warnings: res.warnings, excluded: res.excludedDrivers || excludedFor(S.sunday), dirty: true, travelNote: res.travelNote, travelSource: res.travelSource };
+  const svc = serviceFor(S.sunday);
+  S.planView = { madeFor: { time: svc.time, arrive: svc.arriveBeforeMin }, edited: !auto, status, assignments: res.assignments, waitlist: res.waitlist, trips: res.trips, warnings: res.warnings, excluded: res.excludedDrivers || excludedFor(S.sunday), dirty: true, travelNote: res.travelNote, travelSource: res.travelSource };
 }
 
 function needChurch() { if (!S.church) throw new Error(S.churchWarning || "The church location isn't set."); }
@@ -281,7 +302,7 @@ const actions = {
   async draft() {
     needChurch();
     if (S.planView && !confirm("Start the plan over from scratch? Any changes you made by hand will be lost.")) return;
-    const res = await draftPlan({ data: S.data, sunday: S.sunday, church: S.church, config: CONFIG });
+    const res = await draftPlan({ data: S.data, sunday: S.sunday, church: S.church, config: configFor(S.sunday) });
     adoptResult(res, "draft");
     S.planOpen = true;
     say(`New plan ready: ${res.assignments.length} seated, ${res.waitlist.length} waiting. Review it, then save or approve.`);
@@ -289,7 +310,7 @@ const actions = {
   async "view-plan"() {
     if (!S.planView) {
       needChurch();
-      const res = await draftPlan({ data: S.data, sunday: S.sunday, church: S.church, config: CONFIG });
+      const res = await draftPlan({ data: S.data, sunday: S.sunday, church: S.church, config: configFor(S.sunday) });
       adoptResult(res, "draft", { auto: true });
       say(`Plan ready: ${res.assignments.length} seated, ${res.waitlist.length} waiting.`);
     }
@@ -299,7 +320,7 @@ const actions = {
   async "add-new"() {
     needChurch();
     const current = S.planView;
-    const res = await draftPlan({ data: S.data, sunday: S.sunday, church: S.church, config: CONFIG, keep: current.assignments });
+    const res = await draftPlan({ data: S.data, sunday: S.sunday, church: S.church, config: configFor(S.sunday), keep: current.assignments });
     adoptResult(res, current.status);
     S.planOpen = true;
     say("New requests added. Everyone else stayed where they were. Review, then save or approve.");
@@ -318,7 +339,7 @@ const actions = {
     else if (!S.planView) planViewFromSaved();
     const current = S.planView;
     if (!current) throw new Error("There's no plan for that Sunday yet. Draft one first.");
-    const res = await reassignDriver({ data: S.data, sunday: d.sunday, church: S.church, config: CONFIG, current, driverId: d.driver });
+    const res = await reassignDriver({ data: S.data, sunday: d.sunday, church: S.church, config: configFor(S.sunday), current, driverId: d.driver });
     S.data = { ...S.data, weeks: res.weeks };
     adoptResult(res, current.status);
     await store.resolveAlert(d.alert);
@@ -333,12 +354,34 @@ const actions = {
     S.data = { ...S.data, requests: S.data.requests.map((q) => (q.riderId === rid && q.sunday === S.sunday ? { ...q, canSplit: true } : q)) };
     const current = S.planView;
     const keep = current.assignments.filter((a) => a.riderId !== rid);
-    const res = await draftPlan({ data: S.data, sunday: S.sunday, church: S.church, config: CONFIG, keep });
+    const res = await draftPlan({ data: S.data, sunday: S.sunday, church: S.church, config: configFor(S.sunday), keep });
     adoptResult(res, current.status);
     say("Re-placed that group across cars. Everyone else stayed where they were. Review, then save.");
   },
   async resolve(d) { await store.resolveAlert(d.id); await reload(); },
   async "refresh-now"() { await refreshNow({ manual: true }); },
+
+  // services (leader)
+  "service-edit"(d) { S.editingService = d.date; S.formDraft = null; },
+  "service-new"() { S.editingService = "new"; S.formDraft = null; },
+  "service-close"() { S.editingService = null; },
+  async "service-off"(d) {
+    if (!confirm(`Mark ${fmtDate(d.date, { weekday: "long", month: "long", day: "numeric" })} as no service? Riders won't be able to ask for a ride that day.`)) return;
+    const cur = S.services.find((x) => x.date === d.date);
+    const before = serviceFor(d.date);
+    await store.saveService({ date: d.date, title: cur?.title || "", time: cur?.time || CONFIG.service.time, arriveBeforeMin: cur?.arriveBeforeMin ?? CONFIG.service.arriveBeforeMin, cutoff: cur?.cutoff || null, cancelled: true, note: cur?.note || "" });
+    await reload(); await unshareIfChanged(d.date, before);
+    say("Marked as no service. Send the announcement from the Texts tab so people know.");
+  },
+  async "service-reset"(d) {
+    const sunday = new Date(d.date + "T12:00:00").getDay() === 0;
+    if (!confirm(sunday ? "Put this Sunday back to the usual service time?" : "Remove this special service? Anyone who asked for a ride for it will no longer see it.")) return;
+    const before = serviceFor(d.date);
+    await store.deleteService(d.date); S.editingService = null; await reload();
+    const taken = await unshareIfChanged(d.date, before);
+    if (taken) { say("Back to the usual time. The plan for that day went back to a draft with new times: check it and approve it again."); return; }
+    say(sunday ? "Back to the usual Sunday service." : "Special service removed.");
+  },
   async "help-answer"(d) {
     const r = await store.answerHelp(d.id, d.answer);
     await reload();
@@ -364,11 +407,11 @@ const actions = {
     const req = S.data.requests.find((q) => q.riderId === d.rider && q.sunday === S.sunday && q.status !== "cancelled");
     if (!req) { await store.addRequest(d.rider, S.sunday, { extraPeople: seats - 1 }); await reload(); }
     if (!S.planView) { await autoUpdatePlan(); }
-    if (!S.planView) throw new Error("There's no plan for this Sunday yet. Open the Plan tab first.");
+    if (!S.planView) throw new Error("There's no plan for this day yet. Open the Plan tab first.");
     const inCar = S.planView.assignments.find((a) => a.riderId === d.rider);
     const from = inCar ? `${inCar.driverId}|${inCar.trip || 1}` : "wait";
     const moved = applyMove({ assignments: S.planView.assignments, waitlist: S.planView.waitlist }, d.rider, `${d.driver}|1`, from);
-    const res = await recompute({ data: S.data, sunday: S.sunday, church: S.church, config: CONFIG, ...moved });
+    const res = await recompute({ data: S.data, sunday: S.sunday, church: S.church, config: configFor(S.sunday), ...moved });
     S.planView = { ...S.planView, assignments: res.assignments, waitlist: res.waitlist, trips: res.trips, warnings: res.warnings, dirty: true, edited: true, travelNote: res.travelNote, travelSource: res.travelSource };
     S.tab = "plan"; S.planOpen = true; S.help = null;
     say("Added to the car. Check the times, then tap Approve & share to send everyone the update.");
@@ -408,7 +451,51 @@ async function findHelpers(form) {
     throw new Error("Type the rider's name and where to pick them up (pick the address from the list).");
   }
   const assignments = S.planView?.assignments || S.data.plans[S.sunday]?.assignments || [];
-  S.help.result = await rankHelpers({ data: S.data, sunday: S.sunday, church: S.church, config: CONFIG, rider, seats, assignments });
+  S.help.result = await rankHelpers({ data: S.data, sunday: S.sunday, church: S.church, config: configFor(S.sunday), rider, seats, assignments });
+}
+
+/**
+ * If a day's start time (or arrive-early minutes) changes, or it's called off, an approved plan
+ * for that day goes back to a draft, so nobody is shown a pickup time worked out for the old time.
+ * The plan re-times itself; the leader approves it again. Returns true if a plan was taken back.
+ */
+async function unshareIfChanged(date, before) {
+  const after = serviceFor(date);
+  const plan = S.data?.plans?.[date];
+  if (!plan || plan.status !== "approved") return false;
+  if (before.time === after.time && before.arriveBeforeMin === after.arriveBeforeMin && before.cancelled === after.cancelled) return false;
+  await store.savePlan(date, "draft", plan.summary || {}, plan.assignments, plan.waitlist);
+  if (S.sunday === date) S.planView = null;
+  await reload();
+  return true;
+}
+
+/** Saves a changed Sunday or a special service from the Services tab. */
+async function saveServiceForm(form) {
+  const f = new FormData(form);
+  const v = (n) => (f.get(n) || "").toString().trim();
+  const date = v("date");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("Choose the date of the service.");
+  if (date < toISO(new Date())) throw new Error("That date has already passed.");
+  const time = v("time");
+  if (!/^\d{2}:\d{2}$/.test(time)) throw new Error("Enter the time the service starts.");
+  const sunday = new Date(date + "T12:00:00").getDay() === 0;
+  const title = v("title");
+  if (!sunday && !title) throw new Error("Give the special service a name, for example Christmas Eve service.");
+  let cutoff = null;
+  if (v("cutoffDate") || v("cutoffTime")) {
+    if (!v("cutoffDate") || !v("cutoffTime")) throw new Error("For the request cutoff, enter both a date and a time (or leave both empty for noon the day before).");
+    const c = new Date(`${v("cutoffDate")}T${v("cutoffTime")}:00`);
+    if (c >= new Date(`${date}T${time}:00`)) throw new Error("The request cutoff has to be before the service starts.");
+    cutoff = c.toISOString();
+  }
+  const arrive = Math.max(0, Math.min(90, Number(v("arriveBefore")) || 0));
+  const before = serviceFor(date);
+  await store.saveService({ date, title, time, arriveBeforeMin: arrive, cutoff, cancelled: false, note: v("note") });
+  S.editingService = null;
+  await reload();
+  const taken = await unshareIfChanged(date, before);
+  say(`Saved. Everyone's dashboard now shows it. Send the announcement from the Texts tab.${taken ? " The plan for that day went back to a draft with new times: check it and approve it again." : ""}`);
 }
 
 /** Sends the last-minute request to the ticked drivers' dashboards. The first to say yes gets the ride. */
@@ -428,7 +515,7 @@ async function onMove(el) {
   if (!el.value) return;
   needChurch();
   const moved = applyMove({ assignments: S.planView.assignments, waitlist: S.planView.waitlist }, el.dataset.rider, el.value, el.dataset.from);
-  const res = await recompute({ data: S.data, sunday: S.sunday, church: S.church, config: CONFIG, ...moved });
+  const res = await recompute({ data: S.data, sunday: S.sunday, church: S.church, config: configFor(S.sunday), ...moved });
   S.planView = { ...S.planView, assignments: res.assignments, waitlist: res.waitlist, trips: res.trips, warnings: res.warnings, dirty: true, edited: true, travelNote: res.travelNote, travelSource: res.travelSource };
 }
 
@@ -438,6 +525,7 @@ async function onSubmit(form) {
   if (kind === "code") { await store.verifyCode(S.signInSent, new FormData(form).get("code").toString().trim()); S.signInSent = ""; S.session = store.session(); await reload(); return; }
   if (kind === "request") { const f = new FormData(form); await store.requestRide(form.dataset.sunday, { rideHome: f.get("rideHome") === "on", note: (f.get("note") || "").toString().trim() || null, extraPeople: Math.max(0, Math.min(10, Number(f.get("extraPeople")) || 0)), canSplit: f.get("canSplit") === "on" }); await reload(); say("Request sent. We'll confirm your driver after requests close."); return; }
   if (kind === "help") { await findHelpers(form); return; }
+  if (kind === "service") { await saveServiceForm(form); return; }
   if (kind === "help-ask") { await askInApp(form); return; }
   if (kind === "profile") {
     const leaderEditing = S.me?.role === "leader" && S.editing;

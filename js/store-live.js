@@ -192,6 +192,19 @@ export async function createLiveStore(config, { createClient } = {}) {
     },
     async resolveAlert(id) { fail(await from("alerts").update({ resolved: true }).eq("id", id)); },
 
+    // ---- services
+    async services() {
+      const res = await from("services").select("*").gte("service_date", new Date(Date.now() - 86400000).toISOString().slice(0, 10)).order("service_date");
+      if (res.error) return []; // before the services database update
+      return res.data.map((r) => ({ date: r.service_date, title: r.title || "", time: String(r.start_time || "").slice(0, 5), arriveBeforeMin: r.arrive_before_min,
+        cutoff: r.cutoff, cancelled: !!r.cancelled, note: r.note || "" }));
+    },
+    async saveService(row) {
+      fail(await from("services").upsert({ service_date: row.date, title: row.title || null, start_time: row.time, arrive_before_min: row.arriveBeforeMin,
+        cutoff: row.cutoff || null, cancelled: !!row.cancelled, note: row.note || null, updated_at: new Date().toISOString() }, { onConflict: "service_date" }));
+    },
+    async deleteService(date) { fail(await from("services").delete().eq("service_date", date)); },
+
     // ---- last-minute requests
     async createHelpRequest(req, asks) {
       const res = await from("help_requests").insert({

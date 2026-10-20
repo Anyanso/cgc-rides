@@ -97,3 +97,6 @@ summary{cursor:pointer;font-weight:600}
 .card.ok-card{background:var(--oksoft);border-color:var(--ok)}
 .helper .check{align-items:flex-start}
 .sync{margin:.2rem 0 .4rem;display:flex;flex-wrap:wrap;align-items:center;gap:.2rem .4rem}.sync .btn.link{padding:.1rem .3rem;font-size:inherit}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:.6rem}@media (max-width:420px){.grid2{grid-template-columns:1fr}}
+.chip.special{border-color:var(--gold)}
+.svcline{margin:.4rem 0;font-size:1.02rem}
