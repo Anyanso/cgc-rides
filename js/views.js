@@ -590,7 +590,7 @@ function lastMinuteCard(S) {
         <button class="btn primary" type="submit">Ask the ticked drivers in the app</button>
         <p class="small muted">They'll see it on their dashboard and tap Yes or No. The first yes gets the ride, and only that driver sees the address${h.phone ? " and phone number" : ""}.</p></form>`
         : `<p class="muted">No cleared drivers with a confirmed address yet.</p>`}
-      ${copyBlock("Or ask the whole group", T.lastMinuteBroadcast(sunday, firstName(h.name), h.neighbourhood, h.seats), "For the drivers' group chat. No address or phone number.")}`;
+`;
   }
 
   // Requests already sent, with each driver's answer.
